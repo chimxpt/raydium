@@ -204,7 +204,7 @@ public class RtLights {
             LightDef d = m.get(key.getPath());
             if (d != null) out.put(bl, d);
         }
-        Initializer.LOGGER.info("[RT] RtLights: таблица цветов — {} блоков из {} записей", out.size(), m.size());
+        Initializer.LOGGER.info("[RT] RtLights: colour table - {} blocks from {} entries", out.size(), m.size());
         TABLE = out;
         return out;
     }
@@ -504,7 +504,7 @@ public class RtLights {
                     int total = 0;
                     for (float[] a : sectionLights.values()) total += a.length / 8;
                     Initializer.LOGGER.info(
-                            "[RT] lights: {}/{} в буфере, ВСЕГО {} из {} секций (перебрано {}), ранжир {} мкс | якоря:{}",
+                            "[RT] lights: {}/{} in buffer, {} total across {} sections ({} scanned), ranking {} us | colour anchors:{}",
                             blockN, MAX_BLOCKS, total, sectionLights.size(), scannedSections,
                             (System.nanoTime() - t0) / 1000, ab);
                 }
@@ -661,7 +661,7 @@ public class RtLights {
         for (int i = 0; i < SLOTS; i++)
             slots[i] = AccelStruct.createBuffer((long) MAX * STRIDE, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                     VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false);
-        Initializer.LOGGER.info("[RT] RtLights: буфер источников света готов ({} слотов x {} огней)", SLOTS, MAX);
+        Initializer.LOGGER.info("[RT] RtLights: light source buffer ready ({} slots x {} lights)", SLOTS, MAX);
     }
 
     public static void shutdown() {

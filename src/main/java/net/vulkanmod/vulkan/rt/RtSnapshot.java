@@ -822,7 +822,7 @@ public class RtSnapshot {
                 // потоков в полёте больше. Замер сказал: платим мы за пиксели, а не за лучи.
                 return vec4(0.0);
             #endif
-                if (cam.rtCfg.w < 0.5) return vec4(0.0);   // облака выключены -> чистое небо
+                if (cam.rtCfg.w < 0.5) return vec4(0.0);   // облака disabledы -> чистое небо
                 if (cloudAmount() < 0.02) return vec4(0.0);         // «ни облачка»
                 int layer = cloudType();
                 int steps, sunSteps;
@@ -1802,9 +1802,9 @@ public class RtSnapshot {
 
             bool inShadow(vec3 o, vec3 dir, bool fromHand){
             #ifndef RT_SHADOWS
-                return false;   // тени выключены — код теневого луча вырезан из шейдера
+                return false;   // тени disabledы — код теневого луча вырезан из шейдера
             #endif
-                if (cam.rtCfg.x < 0.5) return false;   // тени выключены в настройках -> луч не пускаем
+                if (cam.rtCfg.x < 0.5) return false;   // тени disabledы в настройках -> луч не пускаем
                 rayQueryEXT rq;
                 rayQueryInitializeEXT(rq, tlas,
                         gl_RayFlagsTerminateOnFirstHitEXT, 0x03, o, 0.001, dir, cam.rtCfg4.x);
@@ -1992,7 +1992,7 @@ public class RtSnapshot {
                 // Вырезано целиком: за этой функцией тянется весь шейдинг отражённого мира.
                 return sky(rd) * mix(0.35, 1.0, skyAccess);
             #endif
-                // Отражения выключены: отдаём цвет НЕБА в ту сторону — дёшево и не чёрная дыра.
+                // Отражения disabledы: отдаём цвет НЕБА в ту сторону — дёшево и не чёрная дыра.
                 if (cam.rtCfg.z < 0.5) return sky(rd) * mix(0.35, 1.0, skyAccess);
                 rayQueryEXT rq;
                 // M8.144l: в ДОЖДЬ укорачиваем луч отражения — дальние отражения тонут в тумане,
@@ -2844,7 +2844,7 @@ public class RtSnapshot {
                     }
                     col = albedo * (ambient + dirLight) + lit;
                     // Сам источник светится (пламя, лава, светокамень) — иначе факел выглядит
-                    // «выключенным»: он освещает стены, но сам остаётся тускло-серым.
+                    // «disabledным»: он освещает стены, но сам остаётся тускло-серым.
                     // ⚠️ ТОЛЬКО БЛОКИ (M8.64). emissiveAt красит светом пламени всё, что попало ВНУТРЬ
                     // КЛЕТКИ источника (|d| < 0.52). Сущность, задевшая телом клетку факела, попадала
                     // под эту проверку целиком — и житель/игрок заливался свечением «сплошняком», а
@@ -3491,8 +3491,8 @@ public class RtSnapshot {
                             "minecraft:shaders/core/rendertype_item_entity_translucent_cull.fsh"));
             boolean tags = res.isPresent() && !"vanilla".equals(res.get().sourcePackId());
             if (tags != (alphaTagPack > 0.5f))
-                net.vulkanmod.Initializer.LOGGER.info("[RT] пак с альфа-метками (Actually 3D Stuff): {}",
-                        tags ? ("АКТИВЕН, пак " + res.get().sourcePackId()) : "выключен");
+                net.vulkanmod.Initializer.LOGGER.info("[RT] resource pack with alpha tags (Actually 3D Stuff): {}",
+                        tags ? ("ACTIVE, pack " + res.get().sourcePackId()) : "disabled");
             alphaTagPack = tags ? 1f : 0f;
         } catch (Throwable t) {
             alphaTagPack = 0f;
@@ -3793,7 +3793,7 @@ public class RtSnapshot {
 
             buildPipeline(device);   // первый пайплайн — под текущие настройки
         }
-        Initializer.LOGGER.info("[RT] RtSnapshot ready — текстурный RT-пайплайн {}x{} собран.", W, H);
+        Initializer.LOGGER.info("[RT] RtSnapshot ready - textured RT pipeline {}x{} built.", W, H);
     }
 
     // === RT PATCH (M8.6): доступ к RT-кадру для вывода на экран ===
@@ -3853,14 +3853,14 @@ public class RtSnapshot {
     /**
      * НАСТРОЙКИ КАК КОД, А НЕ КАК ФЛАГИ.
      *
-     * ⚠️ ЗАЧЕМ. Замер сказал странное: выключение теней, отражений, облаков и четырёх лучей амбиента
+     * ⚠️ ЗАЧЕМ. Замер сказал странное: disabledие теней, отражений, облаков и четырёх лучей амбиента
      * НЕ МЕНЯЛО время трассировки — а уменьшение числа пикселей меняло почти линейно. Так ведёт себя
      * перегруженный «уберщейдер»: видеокарта выделяет регистры под САМЫЙ ТЯЖЁЛЫЙ путь исполнения,
-     * поэтому код облаков занимает их, даже когда облака выключены условием. Мало регистров — мало
+     * поэтому код облаков занимает их, даже когда облака disabledы условием. Мало регистров — мало
      * потоков в полёте — ядра стоят в ожидании памяти, и вырезание веток НИЧЕГО не даёт.
      *
      * Поэтому настройка теперь ВЫРЕЗАЕТ КОД препроцессором, а пайплайн пересобирается под новый
-     * набор. Это дороже (пересборка ~секунда), зато выключенное действительно исчезает.
+     * набор. Это дороже (пересборка ~секунда), зато disabledное действительно исчезает.
      */
     private String pipelineDefines() {
         var c = Initializer.CONFIG;
@@ -3886,7 +3886,7 @@ public class RtSnapshot {
             pipeline = pPipe.get(0);
             vkDestroyShaderModule(device, shader, null);
             pipeSig = defs;
-            Initializer.LOGGER.info("[RT] пайплайн собран под настройки: [{}]", defs.replace("\n", " ").trim());
+            Initializer.LOGGER.info("[RT] pipeline compiled for settings: [{}]", defs.replace("\n", " ").trim());
         }
     }
 
@@ -3946,7 +3946,7 @@ public class RtSnapshot {
             vkDeviceWaitIdle(device);
             W = nW; H = nH; lastScalePct = pct;
             RtDlss.resetFeature();   // фича привязана к разрешению входа -> пересоздать (NGX НЕ трогаем)
-            Initializer.LOGGER.info("[RT] разрешение трассировки: {}x{} ({}% от {}x{})",
+            Initializer.LOGGER.info("[RT] trace resolution: {}x{} ({}% of {}x{})",
                     W, H, pct, outW, outH);
         }
 
@@ -4102,12 +4102,12 @@ public class RtSnapshot {
             // === RT PATCH === НАСТРОЙКИ в шейдер (см. cam.rtCfg). Смещение = сразу за рёбрами обводки.
             var cfg = net.vulkanmod.Initializer.CONFIG;
             int cfgOff = camOff + 96 + OUTLINE_MAX_EDGES * 32;
-            // ЗАМЕР ДОВЕРИЯ К НАСТРОЙКАМ: что Java РЕАЛЬНО кладёт в шейдер. Если тумблер выключен,
+            // ЗАМЕР ДОВЕРИЯ К НАСТРОЙКАМ: что Java РЕАЛЬНО кладёт в шейдер. Если тумблер disabled,
             // а тут единица — виноват UI (значение не сохраняется), а не графика.
             if (System.currentTimeMillis() - cfgLogAt > 3000) {
                 cfgLogAt = System.currentTimeMillis();
-                Initializer.LOGGER.info("[RT] НАСТРОЙКИ В ШЕЙДЕР: тени={} амбиент={} отражения={} облака={} "
-                                + "качество={} свет={} разрешение={}%",
+                Initializer.LOGGER.info("[RT] SETTINGS TO SHADER: shadows={} ambient={} reflections={} clouds={} "
+                                + "quality={} colouredLight={} resolution={}%",
                         cfg.rtShadows ? 1 : 0, cfg.rtAmbientRays, cfg.rtReflections ? 1 : 0,
                         cfg.rtClouds ? 1 : 0, cfg.rtQuality, cfg.rtColoredLights ? 1 : 0, cfg.renderScale);
             }
@@ -4350,9 +4350,9 @@ public class RtSnapshot {
                 img.setRGB(0, 0, W, H, px, 0, W);
                 File f = new File("rt-snapshot.png");
                 ImageIO.write(img, "png", f);
-                Initializer.LOGGER.info("[RT] RT-кадр сохранён: {}", f.getAbsolutePath());
+                Initializer.LOGGER.info("[RT] RT frame saved: {}", f.getAbsolutePath());
             } catch (Throwable e) {
-                Initializer.LOGGER.error("[RT] запись PNG не удалась: ", e);
+                Initializer.LOGGER.error("[RT] writing the PNG failed: ", e);
             }
         }, "RT-snapshot-encode");
         t.setDaemon(true);

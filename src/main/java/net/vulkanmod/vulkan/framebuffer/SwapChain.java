@@ -265,7 +265,7 @@ public class SwapChain extends Framebuffer {
                 // быть (показ без синхронизации требует протокола tearing-control), и мы молча
                 // уезжаем в Mailbox — задержки нет, но кадры не чаще частоты монитора. Тогда «FPS
                 // упал» на деле означает «FPS упёрся в потолок», и лечить надо совсем другое.
-                Initializer.LOGGER.info("[RT] режим показа кадров: {} (доступно: {})",
+                Initializer.LOGGER.info("[RT] present mode: {} (available: {})",
                         getDisplayModeString(requestedMode), listModes(availablePresentModes));
                 return requestedMode;
             }

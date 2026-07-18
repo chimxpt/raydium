@@ -64,11 +64,11 @@ public class RtMoon {
             MemoryUtil.memFree(buf);
 
             tex = image;
-            Initializer.LOGGER.info("[RT] луна Eclipse: карта сферы {}x{} (из {}x{})",
+            Initializer.LOGGER.info("[RT] moon: equirectangular sphere map {}x{} (from {}x{})",
                     W, H, src.getWidth(), src.getHeight());
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] не смог загрузить текстуру луны: ", t);
+            Initializer.LOGGER.error("[RT] failed to load the moon texture: ", t);
         }
     }
 }

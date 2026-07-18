@@ -81,10 +81,10 @@ public class RtCracks {
             MemoryUtil.memFree(buf);
 
             tex = image;
-            Initializer.LOGGER.info("[RT] трещины ломания: атлас стадий {}x{} собран", w, totalH);
+            Initializer.LOGGER.info("[RT] block breaking: {}x{} destroy-stage atlas built", w, totalH);
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] не смог собрать атлас трещин: ", t);
+            Initializer.LOGGER.error("[RT] failed to build the destroy-stage atlas: ", t);
         }
     }
 }

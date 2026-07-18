@@ -261,7 +261,7 @@ public abstract class Options {
                 value -> {
                     config.rtEnabled = value;
                     net.vulkanmod.vulkan.rt.RtScreen.enabled = value;
-                    // ⚠️ Включили обратно — секции надо ПЕРЕСТРОИТЬ: пока RT был выключен, мы не
+                    // ⚠️ Включили обратно — секции надо ПЕРЕСТРОИТЬ: пока RT был disabled, мы не
                     // строили для них BLAS, и мир для лучей пуст. Ванильный allChanged() заставляет
                     // игру перезалить чанки, а вместе с ними приедут и наши BLAS.
                     if (value && minecraft.levelRenderer != null) minecraft.levelRenderer.allChanged();
@@ -322,10 +322,10 @@ public abstract class Options {
                 .setImpact(PerformanceImpact.LOW);
 
         // M8.122: «Шейдеры» — наш пост (AgX + экранные эффекты) поверх ванильного растра при
-        // выключенной трассировке. Иерархия (M8.122c, по слову пользователя): «Шейдеры» доступны
-        // ВСЕГДА, и их выключение УТАСКИВАЕТ RT за собой (RT без шейдеров не работает) — виджет
+        // disabledной трассировке. Иерархия (M8.122c, по слову пользователя): «Шейдеры» доступны
+        // ВСЕГДА, и их disabledие УТАСКИВАЕТ RT за собой (RT без шейдеров не работает) — виджет
         // перещёлкивается честно, он читает getNewValue() при отрисовке. А вот включить RT при
-        // выключенных шейдерах нельзя — ручка заблокирована. Три режима:
+        // disabledных шейдерах нельзя — ручка заблокирована. Три режима:
         // RT ВКЛ -> растр + шейдеры -> чистый растр. Инвариант: RT ВКЛ => шейдеры ВКЛ.
         var shadersOption = new SwitchOption(Component.translatable("vulkanmod.options.shaders.enabled"),
                 value -> config.shadersEnabled = value,
@@ -339,12 +339,12 @@ public abstract class Options {
 
         shadersToggle = shadersOption;   // M8.122e: живой гейт для ванильных ручек «Графики»
 
-        // Трассировка выключена -> подчинённые ручки гаснут: они бы всё равно ни на что не влияли.
+        // Трассировка disabledа -> подчинённые ручки гаснут: они бы всё равно ни на что не влияли.
         Option<?>[] sub = { qualityOption,
                 shadowsOption, ambientOption, reflOption, cloudsOption, lightsOption };
         for (Option<?> o : sub) o.setActivationFn(() -> rtOption.getNewValue());
         // M8.122e: DLSS — только на железе, где его инициализация не провалилась (старые GPU
-        // без тензорных ядер: тумблер гаснет; RT при выключенном RT и так не пускает).
+        // без тензорных ядер: тумблер гаснет; RT при disabledном RT и так не пускает).
         dlssOption.setActivationFn(() -> rtOption.getNewValue()
                 && net.vulkanmod.vulkan.rt.RtDlss.hardwareOk());
         // M8.122e: «Разрешение трассировки» имеет смысл ТОЛЬКО с DLSS: без апскейлера кадр

@@ -54,7 +54,7 @@ public class RtDlss {
             Thread.currentThread().interrupt();
             return fallback;
         } catch (ExecutionException e) {
-            Initializer.LOGGER.error("[RT] DLSS: нативный вызов упал: ", e.getCause());
+            Initializer.LOGGER.error("[RT] DLSS: native call threw: ", e.getCause());
             failed = true;
             return fallback;
         }
@@ -106,7 +106,7 @@ public class RtDlss {
                                          int inW, int inH, int outW, int outH, float[] nums, float[] mats);
     private static native void nShutdown();
 
-    /** Распаковать прослойку из jar во временный файл и загрузить. Без неё DLSS просто выключен. */
+    /** Распаковать прослойку из jar во временный файл и загрузить. Без неё DLSS просто disabled. */
     private static synchronized boolean loadLib() {
         if (libTried) return libLoaded;
         libTried = true;
@@ -115,7 +115,7 @@ public class RtDlss {
         String ext = windows ? ".dll" : ".so";
         try (InputStream in = RtDlss.class.getResourceAsStream(res)) {
             if (in == null) {
-                Initializer.LOGGER.info("[RT] DLSS: прослойка {} не вшита в jar — DLSS выключен", res);
+                Initializer.LOGGER.info("[RT] DLSS: shim {} is not bundled in the jar - DLSS disabled", res);
                 return false;
             }
             Path tmp = Files.createTempFile("mcrt_ngx", ext);
@@ -123,9 +123,9 @@ public class RtDlss {
             Files.copy(in, tmp, StandardCopyOption.REPLACE_EXISTING);
             System.load(tmp.toAbsolutePath().toString());
             libLoaded = true;
-            Initializer.LOGGER.info("[RT] DLSS: прослойка загружена ({})", tmp);
+            Initializer.LOGGER.info("[RT] DLSS: shim loaded ({})", tmp);
         } catch (Throwable t) {
-            Initializer.LOGGER.warn("[RT] DLSS: прослойка не загрузилась — DLSS выключен: {}", t.toString());
+            Initializer.LOGGER.warn("[RT] DLSS: shim failed to load - DLSS disabled: {}", t.toString());
         }
         return libLoaded;
     }
@@ -142,9 +142,9 @@ public class RtDlss {
             if (s != null && !s.isEmpty())
                 for (String e : s.split("\n"))
                     if (!e.isBlank()) out.add(e.trim());
-            Initializer.LOGGER.info("[RT] DLSS требует расширения устройства: {}", out);
+            Initializer.LOGGER.info("[RT] DLSS requires device extensions: {}", out);
         } catch (Throwable t) {
-            Initializer.LOGGER.warn("[RT] DLSS: не удалось спросить расширения: {}", t.toString());
+            Initializer.LOGGER.warn("[RT] DLSS: could not query required extensions: {}", t.toString());
         }
         return out;
     }
@@ -182,12 +182,12 @@ public class RtDlss {
                         if (in == null) continue;
                         Path dst = dir.resolve(name);
                         Files.copy(in, dst, StandardCopyOption.REPLACE_EXISTING);
-                        Initializer.LOGGER.info("[RT] DLSS: модель распакована из jar: {}", dst);
+                        Initializer.LOGGER.info("[RT] DLSS: model extracted from the jar: {}", dst);
                     }
                 }
             }
         } catch (Throwable t) {
-            Initializer.LOGGER.warn("[RT] DLSS: распаковка модели из jar не удалась: {}", t.toString());
+            Initializer.LOGGER.warn("[RT] DLSS: extracting the model from the jar failed: {}", t.toString());
         }
     }
 
@@ -199,23 +199,23 @@ public class RtDlss {
             Path dir = modelDir();
             ensureModel(dir);   // релизный jar несёт модель с собой — распакуем при первом старте
             if (!Files.isDirectory(dir)) {
-                Initializer.LOGGER.warn("[RT] DLSS: нет папки с моделью {} — DLSS выключен", dir);
+                Initializer.LOGGER.warn("[RT] DLSS: model directory {} is missing - DLSS disabled", dir);
                 failed = true;
                 return false;
             }
-            Initializer.LOGGER.info("[RT] DLSS: инициализирую NGX (модель: {})", dir);
+            Initializer.LOGGER.info("[RT] DLSS: initialising NGX (model: {})", dir);
             int r = onNgxThread(() -> nInit(instance, physDevice, device, dir.toString(), dir.toString()), -999);
             if (r != 0) {
-                Initializer.LOGGER.warn("[RT] DLSS: NGX не инициализировался (код {}) — DLSS выключен", r);
+                Initializer.LOGGER.warn("[RT] DLSS: NGX failed to initialise (code {}) - DLSS disabled", r);
                 failed = true;
                 return false;
             }
             initialized = true;
-            Initializer.LOGGER.info("[RT] DLSS Ray Reconstruction ДОСТУПЕН");
+            Initializer.LOGGER.info("[RT] DLSS Ray Reconstruction is AVAILABLE");
             return true;
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] DLSS init упал: ", t);
+            Initializer.LOGGER.error("[RT] DLSS init threw: ", t);
             return false;
         }
     }
@@ -224,20 +224,20 @@ public class RtDlss {
     public static synchronized boolean createFeature(long cmdBuf, int inW, int inH, int outW, int outH) {
         if (!initialized || failed) return false;
         try {
-            Initializer.LOGGER.info("[RT] DLSS: создаю фичу {}x{} -> {}x{}, пресет E (свежий трансформер)",
+            Initializer.LOGGER.info("[RT] DLSS: creating feature {}x{} -> {}x{}, preset E (latest transformer)",
                     inW, inH, outW, outH);
             feature = onNgxThread(
                     () -> nCreateFeature(cmdBuf, inW, inH, outW, outH, PRESET_E_LATEST_TRANSFORMER), 0L);
             if (feature == 0) {
-                Initializer.LOGGER.warn("[RT] DLSS: фича не создалась — DLSS выключен");
+                Initializer.LOGGER.warn("[RT] DLSS: feature creation failed - DLSS disabled");
                 failed = true;
                 return false;
             }
-            Initializer.LOGGER.info("[RT] DLSS: фича создана {}x{} -> {}x{}", inW, inH, outW, outH);
+            Initializer.LOGGER.info("[RT] DLSS: feature created {}x{} -> {}x{}", inW, inH, outW, outH);
             return true;
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] DLSS createFeature упал: ", t);
+            Initializer.LOGGER.error("[RT] DLSS createFeature threw: ", t);
             return false;
         }
     }
@@ -255,7 +255,7 @@ public class RtDlss {
     public static boolean ready() { return initialized && !failed && feature != 0; }
 
     /** M8.122e: железо/драйвер тянут DLSS (инициализация не провалена). Гейт ТУМБЛЕРА в UI:
-     *  на старых GPU ручка гаснет. Нарочно без enabled — иначе выключенный тумблер сам себя
+     *  на старых GPU ручка гаснет. Нарочно без enabled — иначе disabledный тумблер сам себя
      *  заблокировал бы и обратно не включался. */
     public static boolean hardwareOk() { return !failed; }
 
@@ -285,19 +285,19 @@ public class RtDlss {
                     () -> nEvaluate(cmdBuf, imgs, fmts, inW, inH, outW, outH, nums, worldToViewAndViewToClip), -999);
             evalNs += System.nanoTime() - t0;
             if (++evalCount >= 300) {
-                Initializer.LOGGER.info("[RT] DLSS: запись вызова = {} мкс/кадр (рендер-поток ждёт столько)",
+                Initializer.LOGGER.info("[RT] DLSS: evaluate call recording = {} us/frame (the render thread waits this long)",
                         evalNs / 1000 / evalCount);
                 evalNs = 0; evalCount = 0;
             }
             if (r != 0) {
-                Initializer.LOGGER.error("[RT] DLSS evaluate вернул код {} — выключаю DLSS", r);
+                Initializer.LOGGER.error("[RT] DLSS evaluate returned code {} - disabling DLSS", r);
                 failed = true;
                 return false;
             }
             return true;
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] DLSS evaluate упал: ", t);
+            Initializer.LOGGER.error("[RT] DLSS evaluate threw: ", t);
             return false;
         }
     }

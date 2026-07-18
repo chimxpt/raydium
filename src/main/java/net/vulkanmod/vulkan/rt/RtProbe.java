@@ -101,7 +101,7 @@ public class RtProbe {
             INSTANCE.trace(tlas);
         } catch (Throwable e) {
             failed = true;
-            Initializer.LOGGER.error("[RT] probe failed (пробный луч не пущен): ", e);
+            Initializer.LOGGER.error("[RT] probe failed (test ray was not traced): ", e);
         }
     }
 
@@ -169,7 +169,7 @@ public class RtProbe {
 
             vkDestroyShaderModule(device, shader, null);
         }
-        Initializer.LOGGER.info("[RT] RtProbe ready — компьют ray-query пайплайн собран.");
+        Initializer.LOGGER.info("[RT] RtProbe ready - compute ray-query pipeline built.");
     }
 
     /** Пустить один луч из камеры по TLAS мира и залогировать результат. */

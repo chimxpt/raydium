@@ -77,7 +77,7 @@ public class RtLightVolume {
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false);
             } catch (Throwable e) {
                 failed = true;
-                Initializer.LOGGER.error("[RT] объём света: не удалось создать буфер", e);
+                Initializer.LOGGER.error("[RT] light volume: buffer creation failed", e);
             }
         }
         return buffer != null ? buffer.buffer : VK_NULL_HANDLE;
@@ -141,12 +141,12 @@ public class RtLightVolume {
                         int filled = 0;
                         for (int i = 3; i < BYTES; i += 4) if (grid[i] != 0) filled++;
                         Initializer.LOGGER.info(
-                                "[RT] объём света: запечён за {} мс, ячеек со светом {} из {} ({}%), секций {}",
+                                "[RT] light volume: baked in {} ms, lit cells {} of {} ({}%), sections {}",
                                 (System.nanoTime() - t0) / 1_000_000, filled, CELLS,
                                 filled * 100 / CELLS, src.size());
                     }
                 } catch (Throwable e) {
-                    Initializer.LOGGER.error("[RT] объём света: сбой запекания", e);
+                    Initializer.LOGGER.error("[RT] light volume: bake failed", e);
                 } finally {
                     building = false;
                 }
@@ -155,7 +155,7 @@ public class RtLightVolume {
             worker.start();
         } catch (Throwable e) {
             failed = true;
-            Initializer.LOGGER.error("[RT] объём света отключён (сбой)", e);
+            Initializer.LOGGER.error("[RT] light volume disabled (failure)", e);
         }
     }
 
@@ -276,7 +276,7 @@ public class RtLightVolume {
 
     private static int clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-    /** Смена мира / выключение трассировки. */
+    /** Смена мира / disabledие трассировки. */
     public static void reset() {
         originX = Integer.MIN_VALUE;
         bakedVersion = -1;

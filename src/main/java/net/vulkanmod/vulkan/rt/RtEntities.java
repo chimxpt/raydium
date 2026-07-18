@@ -158,7 +158,7 @@ public class RtEntities {
             if (has == null) {   // есть ли такой файл в паках — спрашиваем ОДИН раз
                 has = mc.getResourceManager().getResource(rl).isPresent();
                 EMIS_EXISTS.put(emisName, has);
-                if (has) net.vulkanmod.Initializer.LOGGER.info("[RT] светящийся слой: {}", emisName);
+                if (has) net.vulkanmod.Initializer.LOGGER.info("[RT] emissive layer: {}", emisName);
             }
             if (!has) return null;
             // Сам образ берём КАЖДЫЙ РАЗ заново: при смене набора ресурсов текстуры пересоздаются,
@@ -188,7 +188,7 @@ public class RtEntities {
     }
 
     /** Из WorldRenderer.setupRenderer: начался рендер мира. */
-    // M8.123b: НЕТ ТРАССИРОВКИ — НЕТ СБОРА. С выключенным RT потребитель (endFrame из
+    // M8.123b: НЕТ ТРАССИРОВКИ — НЕТ СБОРА. С disabledным RT потребитель (endFrame из
     // recordFrameRebuild) не вызывается, а сборщики продолжали КОПИТЬ каждый кадр: accPtr
     // рос минутами, пока nmemRealloc не вернул NULL (без исключения!), и memCopy в ноль
     // ронял процесс (SIGSEGV в collectParticle, exit 6). Гейт — в точках входа.
@@ -255,7 +255,7 @@ public class RtEntities {
             }
             AccelStruct.destroyBuffer(buf);
         } catch (Throwable t) {
-            net.vulkanmod.Initializer.LOGGER.error("[RT] проба текселя: ", t);
+            net.vulkanmod.Initializer.LOGGER.error("[RT] texel probe: ", t);
         }
     }
     /** M8.126d: + габариты и диапазон UV — определить, КАКОЙ батч рисуется «коробкой»
@@ -451,7 +451,7 @@ public class RtEntities {
         long now = System.currentTimeMillis();
         if (now - weatherLogT > 3000) {
             weatherLogT = now;
-            net.vulkanmod.Initializer.LOGGER.info("[RT] погода: захвачено ~{} квадов/3с (батчей +{})",
+            net.vulkanmod.Initializer.LOGGER.info("[RT] weather: captured ~{} quads/3s (batches +{})",
                     weatherQuads, accBatches.size() - before);
             weatherQuads = 0;
         }
@@ -824,7 +824,7 @@ public class RtEntities {
             overflowTex = null;
         } else if (now - lastTexLog > 30000) {
             lastTexLog = now;
-            net.vulkanmod.Initializer.LOGGER.info("[RT] текстур сущностей в кадре: {} (пик {}, потолок {})",
+            net.vulkanmod.Initializer.LOGGER.info("[RT] entity textures this frame: {} (peak {}, cap {})",
                     texList.size(), peakTex, MAX_TEX);
         }
 
@@ -890,7 +890,7 @@ public class RtEntities {
         long now = System.currentTimeMillis();
         if (now - skipLogAt > 3000 && !skipped.isEmpty()) {
             skipLogAt = now;
-            net.vulkanmod.Initializer.LOGGER.info("[RT] ВЫБРОШЕНО из трассировки: {}", skipped);
+            net.vulkanmod.Initializer.LOGGER.info("[RT] DROPPED from the trace: {}", skipped);
             skipped.clear();
         }
     }

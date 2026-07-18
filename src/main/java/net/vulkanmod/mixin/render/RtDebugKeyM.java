@@ -22,8 +22,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class RtDebugKeyM {
 
     private static final String[] NAMES = {
-            "выкл", "глубина", "векторы движения", "нормали", "диффузное альбедо",
-            "зеркальное альбедо (F0)", "шероховатость"
+            "off", "depth", "motion vectors", "normals", "diffuse albedo",
+            "specular albedo (F0)", "roughness"
     };
 
     @Inject(method = "keyPress", at = @At("HEAD"))
@@ -34,17 +34,17 @@ public class RtDebugKeyM {
         if (keyEvent.key() == 295) {                                     // F6 — просмотр guide-буферов
             RtPost.debugView = (RtPost.debugView + 1) % RtPost.DEBUG_MODES;
             if (mc.gui != null)
-                mc.gui.setOverlayMessage(Component.literal("[RT] буфер: " + NAMES[RtPost.debugView]), false);
+                mc.gui.setOverlayMessage(Component.literal("[RT] buffer: " + NAMES[RtPost.debugView]), false);
         } else if (keyEvent.key() == 296) {                              // F7 — знаки jitter для DLSS
             String mode = net.vulkanmod.vulkan.rt.RtDlss.cycleJitter();
             if (mc.gui != null)
-                mc.gui.setOverlayMessage(Component.literal("[RT] jitter для DLSS: " + mode), false);
+                mc.gui.setOverlayMessage(Component.literal("[RT] DLSS jitter: " + mode), false);
         } else if (keyEvent.key() == 298) {                              // F9 — дамп батчей РУКИ (M8.126b)
             // Диагностика «картонной коробки» (Actually 3D Stuff + Hold My Items): какой
             // рендер-тайп несёт предмет и какая текстура ему досталась. Пишет в latest.log.
             net.vulkanmod.vulkan.rt.RtEntities.armHandDump();
             if (mc.gui != null)
-                mc.gui.setOverlayMessage(Component.literal("[RT] дамп батчей руки -> latest.log"), false);
+                mc.gui.setOverlayMessage(Component.literal("[RT] hand batch dump -> latest.log"), false);
         } else if (keyEvent.key() == 297) {                              // F8 — САМ DLSS вкл/выкл
             // Нужен, чтобы отличать «так рисует наш шейдер» от «так это перерисовала нейросеть».
             net.vulkanmod.vulkan.rt.RtDlss.enabled = !net.vulkanmod.vulkan.rt.RtDlss.enabled;

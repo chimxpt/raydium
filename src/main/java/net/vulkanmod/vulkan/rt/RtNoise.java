@@ -57,10 +57,10 @@ public class RtNoise {
             MemoryUtil.memFree(buf);
 
             tex = image;
-            Initializer.LOGGER.info("[RT] noisetex Eclipse загружен: {}x{}", w, h);
+            Initializer.LOGGER.info("[RT] noise texture loaded: {}x{}", w, h);
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] не смог загрузить noisetex Eclipse: ", t);
+            Initializer.LOGGER.error("[RT] failed to load the noise texture: ", t);
         }
     }
 }

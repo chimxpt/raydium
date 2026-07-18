@@ -370,13 +370,13 @@ public class RtMaterialMap {
             var atlasImg = RtSnapshot.atlasImage();
             if (atlasImg != null) {
                 if (atlasImg.width != mapW || atlasImg.height != mapH)
-                    Initializer.LOGGER.warn("[RT] размер атласа: реальный {}x{}, по пропорции {}x{} — беру реальный",
+                    Initializer.LOGGER.warn("[RT] atlas size: actual {}x{}, derived from UVs {}x{} - using the actual one",
                             atlasImg.width, atlasImg.height, mapW, mapH);
                 mapW = atlasImg.width;
                 mapH = atlasImg.height;
             }
             if (mapW < 256 || mapH < 256 || mapW > 8192 || mapH > 8192) {
-                Initializer.LOGGER.warn("[RT] странный размер атласа {}x{} — карта материалов пропущена", mapW, mapH);
+                Initializer.LOGGER.warn("[RT] implausible atlas size {}x{} - material map skipped", mapW, mapH);
                 failed = true;
                 return;
             }
@@ -413,12 +413,12 @@ public class RtMaterialMap {
             MemoryUtil.memFree(buf);
 
             tex = image;
-            Initializer.LOGGER.info("[RT] карта материалов {}x{}: залито {} спрайтов", mapW, mapH, filled[0]);
+            Initializer.LOGGER.info("[RT] material map {}x{}: {} sprites filled", mapW, mapH, filled[0]);
             if (missed.length() > 0)
-                Initializer.LOGGER.info("[RT] спрайты НЕ найдены: {}", missed.toString().trim());
+                Initializer.LOGGER.info("[RT] sprites NOT found: {}", missed.toString().trim());
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] карта материалов не собралась: ", t);
+            Initializer.LOGGER.error("[RT] material map build failed: ", t);
         }
     }
 }

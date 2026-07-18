@@ -61,10 +61,10 @@ public class RtRain {
             MemoryUtil.memFree(buf);
 
             tex = image;
-            Initializer.LOGGER.info("[RT] осадки: атлас дождь+снег {}x{} собран", w, totalH);
+            Initializer.LOGGER.info("[RT] precipitation: rain+snow atlas {}x{} built", w, totalH);
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] не смог собрать атлас осадков: ", t);
+            Initializer.LOGGER.error("[RT] failed to build the precipitation atlas: ", t);
         }
     }
 

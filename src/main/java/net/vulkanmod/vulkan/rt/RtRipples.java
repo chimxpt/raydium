@@ -56,7 +56,7 @@ public class RtRipples {
                 slots[i] = AccelStruct.createBuffer((long) (HEADER + MAX) * STRIDE,
                         VK_BUFFER_USAGE_STORAGE_BUFFER_BIT,
                         VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, false);
-            Initializer.LOGGER.info("[RT] RtRipples: буфер ударов капель готов ({} слотов x {})", SLOTS, MAX);
+            Initializer.LOGGER.info("[RT] RtRipples: raindrop impact buffer ready ({} slots x {})", SLOTS, MAX);
         } catch (Throwable t) {
             failed = true;
             Initializer.LOGGER.error("[RT] RtRipples alloc failed: ", t);

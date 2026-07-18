@@ -270,7 +270,7 @@ public abstract class DeviceManager {
                         .collect(toSet());
                 for (String ext : net.vulkanmod.vulkan.rt.RtDlss.requiredDeviceExtensions()) {
                     if (available.contains(ext)) enabledExtensions.add(ext);
-                    else Initializer.LOGGER.warn("[RT] DLSS просит расширение {}, но GPU его не умеет", ext);
+                    else Initializer.LOGGER.warn("[RT] DLSS requests device extension {}, but the GPU does not support it", ext);
                 }
             } else {
                 Initializer.LOGGER.info("[RT] Hardware ray tracing NOT supported on this GPU — running as usual.");

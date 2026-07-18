@@ -208,7 +208,7 @@ public class AccelStruct {
                     .sType$Default().buffer(sl.buffer);
             sl.baseAddr = vkGetBufferDeviceAddress(device, ai);
             sl.freePut(0L, size);
-            net.vulkanmod.Initializer.LOGGER.info("[RT] новая плита памяти: {} МБ (всего плит: {})",
+            net.vulkanmod.Initializer.LOGGER.info("[RT] new memory slab: {} MB (slabs total: {})",
                     size >> 20, slabs.size() + 1);
             return sl;
         }

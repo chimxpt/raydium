@@ -74,7 +74,7 @@ public class RtWorld {
                         // только портит растровые пути. Держим NONE принудительно.
                         mc.options.textureFiltering().set(net.minecraft.client.TextureFilteringMethod.NONE);
                         vanillaShadowsOff = true;
-                        Initializer.LOGGER.info("[RT] ванильные блоб-тени выключены (тени даёт трассировка); сглаживание текстур выключено");
+                        Initializer.LOGGER.info("[RT] vanilla blob shadows disabled (shadows come from the trace); texture smoothing disabled");
                     }
                 } catch (Throwable ignored) {}
             }
@@ -262,7 +262,7 @@ public class RtWorld {
     public void enqueueSection(long key, int wx, int wy, int wz,
                                long bufferId, long byteOffset, int vertexCount, int vertexSize,
                                boolean opaque, boolean water) {
-        // Трассировка выключена в настройках — не строим BLAS вовсе (это чистая экономия CPU и
+        // Трассировка disabledа в настройках — не строим BLAS вовсе (это чистая экономия CPU и
         // видеопамяти). При обратном включении настройка заставляет игру перестроить чанки, и
         // секции приедут сюда заново — см. Options, страница «Трассировка».
         if (!net.vulkanmod.Initializer.CONFIG.rtEnabled) return;
@@ -316,9 +316,9 @@ public class RtWorld {
             long knownUs = (t1 - t0) / 1000 + AccelStruct.acquireNs / 1000 + AccelStruct.sizesNs / 1000
                     + AccelStruct.createAsNs / 1000 + AccelStruct.addrNs / 1000
                     + AccelStruct.buildCmdNs / 1000 + copyRecNs / 1000 + submitNs / 1000;
-            Initializer.LOGGER.warn("[RT] РЫВОК: {} мкс на {} секций ({} мкс/секция) | вершины {} | "
-                            + "ПУЛ(всё) {} мкс (промахов {}: {} мкс) | размеры {} | создание AS {} | адреса {} | "
-                            + "запись копий {} | ЗАПИСЬ СБОРКИ {} | отправка {} | ПРОЧЕЕ {} мкс",
+            Initializer.LOGGER.warn("[RT] HITCH: {} us for {} sections ({} us/section) | vertices {} | "
+                            + "POOL(total) {} us (misses {}: {} us) | sizing {} | AS creation {} | addresses {} | "
+                            + "copy recording {} | BUILD RECORDING {} | submit {} | OTHER {} us",
                     totalUs, queued, queued == 0 ? 0 : totalUs / queued, (t1 - t0) / 1000,
                     AccelStruct.acquireNs / 1000, AccelStruct.missCount, AccelStruct.missNs / 1000,
                     AccelStruct.sizesNs / 1000, AccelStruct.createAsNs / 1000,
@@ -509,8 +509,8 @@ public class RtWorld {
                 // ⚠️ ЗАМЕР ПУЛА (M8.58): «выделений» — сколько раз реально звали vkAllocateMemory
                 // (дорого, особенно на Windows), «из пула» — сколько раз буфер пришёл готовым.
                 // Если фикс работает, при беготне по миру растёт ВТОРОЕ число, а первое стоит.
-                Initializer.LOGGER.info("[RT] built {} section BLASes (live: {}, очередь: {}) | "
-                                + "память: выделений {}, из пула {}, запас {} МБ",
+                Initializer.LOGGER.info("[RT] built {} section BLASes (live: {}, queued: {}) | "
+                                + "memory: allocations {}, from pool {}, reserve {} MB",
                         builtCount, sections.size(), pending.size(),
                         AccelStruct.allocCount(), AccelStruct.reuseCount(), AccelStruct.pooledMB());
         }
@@ -544,7 +544,7 @@ public class RtWorld {
             if (w.tlas != null)          { w.deferAS(w.tlas);           w.tlas = null; }
             w.sectionsChanged = true;
             w.tlasDirty = true;
-            Initializer.LOGGER.info("[RT] мир сменился — геометрия трассировки сброшена");
+            Initializer.LOGGER.info("[RT] world changed - ray tracing geometry reset");
         } catch (Throwable t) {
             Initializer.LOGGER.error("[RT] resetWorld", t);
         }
@@ -582,7 +582,7 @@ public class RtWorld {
         if (decodeTransform != null) { AccelStruct.releaseBuffer(decodeTransform); decodeTransform = null; }
         if (quadIndex != null) { AccelStruct.releaseBuffer(quadIndex); quadIndex = null; }
         AccelStruct.clearPool();   // запас пула — тоже освободить
-        Initializer.LOGGER.info("[RT] RtWorld освобождён при выходе");
+        Initializer.LOGGER.info("[RT] RtWorld released on shutdown");
     }
     // === /RT PATCH ===
 
@@ -735,7 +735,7 @@ public class RtWorld {
                       .append('[').append(entityTexList[i] != null ? entityTexList[i].width : -1).append('x')
                       .append(entityTexList[i] != null ? entityTexList[i].height : -1).append(']')
                       .append('(').append(hist[i]).append("q) ");
-                Initializer.LOGGER.info("[RT] entity BLAS: {} quads (тело игрока: {}, рука: {}) | {}", quads, playerQuads, handQuads, sb);
+                Initializer.LOGGER.info("[RT] entity BLAS: {} quads (player body: {}, hand: {}) | {}", quads, playerQuads, handQuads, sb);
             }
         } catch (Throwable e) {
             logThrottled("recordEntityBlas", e);
@@ -872,7 +872,7 @@ public class RtWorld {
                 // ДИАГНОСТИКА M8.146 (временно): капли рисуются чужой текстурой — смотрим реальные числа
                 if ((entityLogged % 200) == 0) {
                     Initializer.LOGGER.info(
-                            "[RT] ОСАДКИ: квадов {} (сущностей {}), инстанс #{}, слот текстуры {}, всего текстур {}",
+                            "[RT] PRECIPITATION: {} quads ({} entity quads), instance #{}, texture slot {}, textures total {}",
                             weatherQuadsN, entityQuads, weatherInstanceIdx,
                             RtEntities.weatherSlot(), entityTexList.length);
                 }
@@ -916,7 +916,7 @@ public class RtWorld {
             asBuildBarrier(frameCmd, stack, VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT);
 
             if (++tlasBuilds % 120 == 0 || tlasBuilds <= 3)
-                Initializer.LOGGER.info("[RT] async TLAS в кадре: {} инстансов (addr=0x{})",
+                Initializer.LOGGER.info("[RT] async TLAS this frame: {} instances (addr=0x{})",
                         count, Long.toHexString(tlas.deviceAddress));
         }
     }

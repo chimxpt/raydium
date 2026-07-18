@@ -115,7 +115,7 @@ public class DefaultMainPass implements MainPass {
         if (this.mainFramebuffer != Renderer.getInstance().getSwapChain()) return;
         boolean rtOn = net.vulkanmod.vulkan.rt.RtScreen.enabled
                 && net.vulkanmod.vulkan.device.DeviceManager.rayTracingSupported;
-        // M8.122: РАСТРОВЫЙ ФОЛБЭК — «Шейдеры» ВКЛ при выключенном/недоступном RT: к этому
+        // M8.122: РАСТРОВЫЙ ФОЛБЭК — «Шейдеры» ВКЛ при disabledном/недоступном RT: к этому
         // моменту ваниль дорисовала ВСЁ (мир, партиклы, погоду), и наш пост накрывает весь кадр.
         boolean rasterPost = !rtOn && net.vulkanmod.Initializer.CONFIG.shadersEnabled;
         if (!rtOn && !rasterPost) return;
@@ -163,7 +163,7 @@ public class DefaultMainPass implements MainPass {
                 Renderer.getInstance().endRenderPass(cmd);
             net.vulkanmod.vulkan.rt.RtPost.copySolidDepth(cmd, this.mainFramebuffer.getDepthAttachment());
         } catch (Throwable t) {
-            net.vulkanmod.Initializer.LOGGER.error("[RT] снимок глубины тверди", t);
+            net.vulkanmod.Initializer.LOGGER.error("[RT] solid-depth snapshot", t);
         }
     }
     // === /RT PATCH ===

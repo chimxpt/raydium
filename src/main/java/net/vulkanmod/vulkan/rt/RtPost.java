@@ -165,7 +165,7 @@ public class RtPost {
                 int height = int(pc.obox[1].w);
                 if (pix.x >= width || pix.y >= height) return;
 
-                // Если DLSS выключен, цвет лежит в рендерном разрешении — масштабируем координату.
+                // Если DLSS disabled, цвет лежит в рендерном разрешении — масштабируем координату.
                 bool dlssOn = int(pc.obox[0].w + 0.5) != 0;
                 ivec2 spix = dlssOn ? pix
                                     : ivec2(vec2(pix) * srcSize / vec2(float(width), float(height)));
@@ -763,7 +763,7 @@ public class RtPost {
             expPipeline = p.get(0);
             vkDestroyShaderModule(device, emod, null);
         }
-        Initializer.LOGGER.info("[RT] RtPost готов — тонмаппинг и автоэкспозиция вынесены из трассировки.");
+        Initializer.LOGGER.info("[RT] RtPost ready - tone mapping and auto-exposure moved out of the trace pass.");
     }
 
     // Разрешения: трассировка и guide живут в РЕНДЕРНОМ (низком), а выход DLSS и экран — в ПОЛНОМ.
@@ -837,7 +837,7 @@ public class RtPost {
      * M8.122: РАСТРОВЫЙ ФОЛБЭК («Шейдеры» ВКЛ, трассировка ВЫКЛ). Ванильный растр уже лежит в
      * цветовом вложении свопчейна: забираем его блитом в hdr-образ (блит сам конвертирует
      * BGRA-свопчейн в RGBA16F), прогоняем НАШ пост (AgX + экранные эффекты; размытие, блик и
-     * автоэкспозиция в этом режиме выключены — их guide-данные без трассировки — мусор) и
+     * автоэкспозиция в этом режиме disabledы — их guide-данные без трассировки — мусор) и
      * оставляем результат в ldr: дальше RtScreen.composite блитит его на экран, как RT-кадр.
      * «Рендерное» и «экранное» разрешения равны — растр уже в полном размере.
      */
@@ -860,7 +860,7 @@ public class RtPost {
                         .setUsage(VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)
                         .setClamp(true)
                         .createVulkanImage();
-                Initializer.LOGGER.info("[RT] фолбэк: снимок глубины тверди {}x{} (формат {})",
+                Initializer.LOGGER.info("[RT] raster fallback: solid-depth snapshot {}x{} (format {})",
                         depthAtt.width, depthAtt.height, depthAtt.format);
             }
             try (MemoryStack stack = stackPush()) {
@@ -878,7 +878,7 @@ public class RtPost {
             }
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] снимок глубины тверди: ", t);
+            Initializer.LOGGER.error("[RT] solid-depth snapshot: ", t);
         }
     }
 
@@ -923,7 +923,7 @@ public class RtPost {
             return true;
         } catch (Throwable t) {
             failed = true;
-            Initializer.LOGGER.error("[RT] растровый пост: ", t);
+            Initializer.LOGGER.error("[RT] raster post-processing: ", t);
             return false;
         } finally {
             if (INSTANCE != null) INSTANCE.rasterFrame = false;

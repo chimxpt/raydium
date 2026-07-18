@@ -108,7 +108,7 @@ public class RtSelfTest {
             AccelStruct.destroyBuffer(inst);
             AccelStruct.destroyBuffer(vtx);
         } catch (Throwable t) {
-            Initializer.LOGGER.error("[RT] Self-test FAILED (движок AS не собрал структуру): ", t);
+            Initializer.LOGGER.error("[RT] Self-test FAILED (acceleration structure build did not succeed): ", t);
         }
     }
 
