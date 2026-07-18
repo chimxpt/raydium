@@ -89,6 +89,10 @@ public class RtEntities {
     private static long framePtr = 0;
     private static int frameCap = 0, frameBytes = 0;
     private static int[] frameQuadSlots = new int[0];       // квад -> слот текстуры
+    // M8.146: ОСАДКИ лежат НЕПРЕРЫВНО в ХВОСТЕ буфера вершин -> из того же буфера строится
+    // отдельный weather-BLAS (со смещением) под своей маской: тени/отражения его не видят.
+    // Слот текстуры у осадков ОДИН на кадр (rain.png или snow.png) -> per-quad quadTex им не нужен.
+    private static int frameWeatherStart = 0, frameWeatherCount = 0, frameWeatherSlot = 0;
     private static VulkanImage[] frameTex = new VulkanImage[0];
 
     private static double camX, camY, camZ;
@@ -740,8 +744,35 @@ public class RtEntities {
             if (framePtr == 0) { frameCap = 0; frameBytes = 0; accBytes = 0; accBatches.clear(); return; }
             frameCap = cap;
         }
-        if (accBytes > 0) MemoryUtil.memCopy(accPtr, framePtr, accBytes);
+        // === M8.146: ОСАДКИ — В КОНЕЦ БУФЕРА (под отдельный BLAS без теней/отражений) ===
+        // Копируем ДВУМЯ проходами: сперва все НЕ-погодные батчи, затем погодные. Тогда квады
+        // осадков лежат непрерывно в хвосте, и из ЭТОГО ЖЕ буфера строится второй BLAS (вершины
+        // со смещением) со своей маской. Порядок accBatches правим так же — иначе таблица
+        // «квад -> слот текстуры» съедет (инвариант ниже это и ловит).
+        if (accBytes > 0) {
+            long dst = 0;
+            ArrayList<Batch> ordered = new ArrayList<>(accBatches.size());
+            for (int pass = 0; pass < 2; pass++) {
+                long off = 0;
+                for (Batch b : accBatches) {
+                    int bytes = b.quads() * 4 * STRIDE;
+                    boolean isW = (b.flags() & WEATHER_FLAG) != 0;
+                    if ((pass == 1) == isW) {            // pass 0 -> не погода, pass 1 -> погода
+                        MemoryUtil.memCopy(accPtr + off, framePtr + dst, bytes);
+                        dst += bytes;
+                        ordered.add(b);
+                    }
+                    off += bytes;
+                }
+                if (pass == 0) frameWeatherStart = (int) (dst / (STRIDE * 4L));   // первый квад осадков
+            }
+            accBatches.clear();
+            accBatches.addAll(ordered);
+        } else {
+            frameWeatherStart = 0;
+        }
         frameBytes = accBytes;
+        frameWeatherCount = Math.max(frameBytes / (STRIDE * 4) - frameWeatherStart, 0);
 
         // Таблица «квад -> слот текстуры» + список уникальных текстур кадра.
         int totalQuads = frameBytes / (STRIDE * 4);
@@ -775,6 +806,7 @@ public class RtEntities {
                 slot = 0;
             }
             int val = slot | b.flags();   // биты 31/30 = тело игрока / рука
+            if ((b.flags() & WEATHER_FLAG) != 0) frameWeatherSlot = slot;   // M8.146: у осадков слот один на кадр
             for (int i = 0; i < b.quads() && q < totalQuads; i++) frameQuadSlots[q++] = val;
         }
         frameTex = texList.toArray(new VulkanImage[0]);
@@ -867,6 +899,10 @@ public class RtEntities {
     static long ptr()              { return framePtr; }
     static int bytes()             { return frameBytes; }
     static int[] quadSlots()       { return frameQuadSlots; }
+    // M8.146: диапазон квадов ОСАДКОВ в хвосте буфера (для отдельного weather-BLAS) + их слот текстуры
+    static int weatherStart()      { return frameWeatherStart; }
+    static int weatherQuads()      { return frameWeatherCount; }
+    static int weatherSlot()       { return frameWeatherSlot; }
     static VulkanImage[] textures(){ return frameTex; }
     static double camXf()          { return fCamX; }
     static double camYf()          { return fCamY; }

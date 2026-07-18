@@ -32,6 +32,7 @@ import org.lwjgl.system.MemoryUtil;
 import org.lwjgl.vulkan.VkDevice;
 
 import it.unimi.dsi.fastutil.floats.FloatArrayList;
+import it.unimi.dsi.fastutil.ints.Int2IntOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 
 import java.nio.ByteBuffer;
@@ -327,11 +328,57 @@ public class RtLights {
         return new float[]{ (float)(sX / c), (float)(sZ / c), by + 0.25f };
     }
 
+    // M8.147 ЦВЕТОВЫЕ ЯКОРЯ — обобщение приёма, которым вытащили портал Энда.
+    private static final int   ANCHOR_MAX  = 24;    // слотов под цветовые семейства (из MAX_BLOCKS)
+    private static final float ANCHOR_DIST = 128f;  // дальше якорь бесполезен: шейдер всё равно уводит оттенок в TORCH_COL
+    private static final Int2IntOpenHashMap anchorSlot = new Int2IntOpenHashMap();
+    private static final float[]   anchorDist = new float[ANCHOR_MAX];
+    private static final float[][] anchorArr  = new float[ANCHOR_MAX][];
+    private static final int[]     anchorOff  = new int[ANCHOR_MAX];
+    private static int anchorN = 0;
+
     /** Дёшево: ранжируем ЗАПЕЧЁННЫЕ источники всех секций -> топ-MAX_BLOCKS в blockPx. */
     private static void gatherSectionLights(double cx, double cy, double cz) {
         float[] score = new float[MAX_BLOCKS];
         int n = 0, worst = -1;
         float worstScore = Float.MAX_VALUE;
+
+        // === M8.147 БРОНЬ ПО ЦВЕТУ ===
+        // Ранжир ниже отбирает по РАССТОЯНИЮ и слеп к ЦВЕТУ. Две сотни одинаковых факелов вокруг
+        // камеры занимают все слоты и дают ОДИН И ТОТ ЖЕ тёплый оттенок — они избыточны; а
+        // единственный soul-фонарь, несущий уникальную синеву, вытесняется, и его блоки желтеют
+        // (репорт: «синева не держится»). Поэтому сперва бронируем слот КАЖДОМУ цветовому
+        // семейству — ближайшего представителя ищем в ПОЛНОМ наборе sectionLights, минуя ранжир.
+        // Это ровно то, чем вытащили портал Энда (nearestEndPortal): поиск по цветовой сигнатуре
+        // в некапнутом списке. Цвет квантуем по 5 бит на канал — оттенки одной природы
+        // (soul_torch/soul_lantern/soul_fire) схлопываются в одно семейство и делят один слот.
+        anchorSlot.clear();
+        anchorN = 0;
+        for (float[] arr : sectionLights.values()) {
+            for (int b = 0; b + 8 <= arr.length; b += 8) {
+                float ax = (float) (arr[b] - cx), ay = (float) (arr[b + 1] - cy), az = (float) (arr[b + 2] - cz);
+                float ad = (float) Math.sqrt(ax * ax + ay * ay + az * az);
+                if (ad > ANCHOR_DIST) continue;
+                int key = ((int) (arr[b + 4] * 31f) << 10)
+                        | ((int) (arr[b + 5] * 31f) << 5)
+                        |  (int) (arr[b + 6] * 31f);
+                int s = anchorSlot.getOrDefault(key, -1);
+                if (s < 0) {
+                    if (anchorN == ANCHOR_MAX) continue;    // семейств больше, чем брони — редкий случай
+                    s = anchorN++;
+                    anchorSlot.put(key, s);
+                    anchorDist[s] = Float.MAX_VALUE;
+                }
+                if (ad < anchorDist[s]) { anchorDist[s] = ad; anchorArr[s] = arr; anchorOff[s] = b; }
+            }
+        }
+        for (int i = 0; i < anchorN; i++) {
+            System.arraycopy(anchorArr[i], anchorOff[i], blockPx, n * 8, 8);
+            score[n] = Float.MAX_VALUE;     // неприкосновенен: вытеснение ищет МИНИМУМ score
+            n++;
+        }
+        // Ближний источник может попасть и в бронь, и в топ — слот-дубль из 192 погоды не делает,
+        // а на смешивании оттенка сказывается ничтожно (тот же цвет уже представлен соседями).
 
         for (float[] arr : sectionLights.values()) {
             for (int b = 0; b + 8 <= arr.length; b += 8) {
@@ -339,9 +386,14 @@ public class RtLights {
                 float dy = (float) (arr[b + 1] - cy);
                 float dz = (float) (arr[b + 2] - cz);
                 float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-                // Значимость = сила (уровень, обрезанный дальностью, = arr[3]) / расстояние: как в
-                // старом scanBlocks, но по готовому списку, а не по свежему скану блоков.
-                float sc = arr[b + 3] / (1.0f + dist);
+                // Значимость = сила (уровень, обрезанный дальностью, = arr[3]) / расстояние.
+                // ⚠️ M8.145: штраф за дистанцию СМЯГЧЁН (был /(1+dist)). Причина: источник светит
+                // на СВОЮ округу независимо от того, где камера. При жёстком штрафе фонарь за 40
+                // блоков получал 15/41 и вытеснялся ближними факелами из топ-MAX_BLOCKS — и блоки
+                // вокруг него теряли цвет, сваливаясь в тёплый фолбэк lightTint (репорт: «синие
+                // фонари теряют оттенок на расстоянии»). Теперь 15/7 — ближние всё ещё приоритетнее,
+                // но дальние не вылетают. Полное решение (запечь цвет в вершины) — отдельная веха.
+                float sc = arr[b + 3] / (1.0f + dist * 0.15f);
 
                 if (n == MAX_BLOCKS) {
                     if (sc <= worstScore) continue;
@@ -376,8 +428,21 @@ public class RtLights {
                 gatherSectionLights(cx, cy, cz);
                 if (now - lastLogMs > 5000) {
                     lastLogMs = now;
-                    Initializer.LOGGER.info("[RT] lights: {} блочных источников из {} секций, ранжир {} мкс",
-                            blockN, sectionLights.size(), (System.nanoTime() - t0) / 1000);
+                    // M8.147: показываем СОСТАВ набора — какие цветовые семейства реально нашлись
+                    // и на каком расстоянии их ближайший представитель. Если синего soul-фонаря
+                    // тут нет, значит его нет и в sectionLights — и виновата не выборка, а сбор.
+                    StringBuilder ab = new StringBuilder();
+                    for (int i = 0; i < anchorN; i++) {
+                        float[] a = anchorArr[i]; int o = anchorOff[i];
+                        ab.append(String.format(" [%.2f %.2f %.2f ур%.0f d=%.0f]",
+                                a[o + 4], a[o + 5], a[o + 6], a[o + 3], anchorDist[i]));
+                    }
+                    int total = 0;
+                    for (float[] a : sectionLights.values()) total += a.length / 8;
+                    Initializer.LOGGER.info(
+                            "[RT] lights: {}/{} в буфере, ВСЕГО {} из {} секций, ранжир {} мкс | якоря:{}",
+                            blockN, MAX_BLOCKS, total, sectionLights.size(),
+                            (System.nanoTime() - t0) / 1000, ab);
                 }
             }
 

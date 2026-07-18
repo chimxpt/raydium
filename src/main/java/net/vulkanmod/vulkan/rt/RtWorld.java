@@ -32,6 +32,9 @@ import static org.lwjgl.vulkan.VK12.*;
  */
 public class RtWorld {
     public static RtWorld INSTANCE;
+    // M8.146: индекс TLAS-инстанса ОСАДКОВ (-1 = осадков в кадре нет). Шейдер опознаёт по нему
+    // попадание в каплю: у осадков одна текстура на кадр, поэтому per-quad quadTex им не нужен.
+    public static volatile int weatherInstanceIdx = -1;
 
     /** Максимум BLAS, собираемых за один кадр (размазываем нагрузку прогрузки). */
     // ⚠️ КАЖДЫЙ суб-батч = отдельный submit + waitIdle, то есть ПОЛНАЯ ОСТАНОВКА рендер-потока.
@@ -193,6 +196,12 @@ public class RtWorld {
     // Френель + отражение (луч-отражение) + преломление (видно дно, тинт поглощением).
     static final int WATER_FLAG = 0x400000;
     private AccelStruct entityBlas;
+    // M8.146: ОСАДКИ — свой BLAS (строится из ТОГО ЖЕ буфера вершин, хвост со смещением).
+    // У его инстанса маска 0x04, и вторичные лучи (тени/отражения/амбиент) идут маской 0x03 —
+    // значит BVH дождя они не обходят ВООБЩЕ (аппаратно). Чинит и «капли в отражениях», и FPS.
+    private AccelStruct weatherBlas;
+    private int weatherQuadsN = 0;
+    private long weatherVtxBase = 0;
     private AccelStruct.RawBuffer entityVtx;
     private AccelStruct.RawBuffer entityQuadTex;   // SSBO: квад -> слот текстуры сущности
     private net.vulkanmod.vulkan.texture.VulkanImage[] entityTexList = new net.vulkanmod.vulkan.texture.VulkanImage[0];
@@ -524,6 +533,10 @@ public class RtWorld {
             w.pending.clear();
             RtLights.clearSectionLights();   // M8.142: запечённый свет старого мира — тоже сбросить
             if (w.entityBlas != null)    { w.deferAS(w.entityBlas);     w.entityBlas = null; }
+            // M8.147: BLAS осадков живёт по тем же правилам, что и BLAS сущностей — он лежит
+            // в ХВОСТЕ того же буфера вершин, поэтому обязан сбрасываться вместе с ним.
+            if (w.weatherBlas != null)   { w.deferAS(w.weatherBlas);    w.weatherBlas = null; }
+            w.weatherQuadsN = 0; w.weatherVtxBase = 0; weatherInstanceIdx = -1;
             if (w.entityVtx != null)     { w.deferBuf(w.entityVtx);     w.entityVtx = null; }
             if (w.entityQuadTex != null) { w.deferBuf(w.entityQuadTex); w.entityQuadTex = null; }
             w.entityQuads = 0;
@@ -559,6 +572,8 @@ public class RtWorld {
             ringBuf[g].clear();
         }
         if (entityBlas != null) { entityBlas.free(); entityBlas = null; }
+        if (weatherBlas != null) { weatherBlas.free(); weatherBlas = null; }   // M8.147: вместе с сущностями
+        weatherQuadsN = 0; weatherVtxBase = 0; weatherInstanceIdx = -1;
         if (entityVtx != null) { AccelStruct.releaseBuffer(entityVtx); entityVtx = null; }
         if (entityQuadTex != null) { AccelStruct.releaseBuffer(entityQuadTex); entityQuadTex = null; }
         if (instanceBuffer != null) { AccelStruct.releaseBuffer(instanceBuffer); instanceBuffer = null; }
@@ -608,6 +623,8 @@ public class RtWorld {
     private void recordEntityBlas(VkCommandBuffer frameCmd, MemoryStack stack,
                                   ArrayList<AccelStruct.RawBuffer> scratchSink) {
         if (entityBlas != null) { deferAS(entityBlas); entityBlas = null; }
+        if (weatherBlas != null) { deferAS(weatherBlas); weatherBlas = null; }   // M8.146
+        weatherQuadsN = 0; weatherVtxBase = 0;
         if (entityVtx != null) { deferBuf(entityVtx); entityVtx = null; }
         if (entityQuadTex != null) { deferBuf(entityQuadTex); entityQuadTex = null; }
         entityQuads = 0;
@@ -637,6 +654,13 @@ public class RtWorld {
             slots.put(src, 0, quads);   // одним куском (было: цикл по тысячам квадов)
             vkUnmapMemory(Vulkan.getVkDevice(), entityQuadTex.memory);
 
+            // === M8.146: ДВА BLAS — сущности и ОСАДКИ отдельно ===
+            // Осадки лежат непрерывно в ХВОСТЕ буфера (RtEntities их туда переупорядочил), поэтому
+            // второй BLAS строится из ТОГО ЖЕ буфера вершин, просто со смещением. У его инстанса
+            // будет маска 0x04, и вторичные лучи пропустят его АППАРАТНО — не обходя BVH дождя.
+            final int nEnt = Math.min(RtEntities.weatherStart(), quads);   // сущности/партиклы
+            final int nWea = Math.max(quads - nEnt, 0);                    // осадки (хвост)
+
             VkAccelerationStructureGeometryKHR.Buffer geo = VkAccelerationStructureGeometryKHR.calloc(1, stack);
             geo.get(0).sType$Default()
                     .geometryType(VK_GEOMETRY_TYPE_TRIANGLES_KHR)
@@ -645,7 +669,7 @@ public class RtWorld {
             var tri = geo.get(0).geometry().triangles();
             tri.sType$Default()
                     .vertexFormat(VK_FORMAT_R32G32B32_SFLOAT)     // позиции сущностей — float
-                    .vertexStride(RtEntities.STRIDE).maxVertex(quads * 4 - 1)
+                    .vertexStride(RtEntities.STRIDE).maxVertex(Math.max(nEnt * 4 - 1, 0))
                     .indexType(VK_INDEX_TYPE_UINT32);
             tri.vertexData().deviceAddress(entityVtx.address);
             tri.indexData().deviceAddress(quadIndex.address);
@@ -659,9 +683,40 @@ public class RtWorld {
                     .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
                     .pGeometries(geo).geometryCount(1);
 
-            entityBlas = AccelStruct.recordBuild(frameCmd, build, quads * 2,
-                    VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, stack, scratchSink);
-            entityQuads = quads;
+            if (nEnt > 0) {
+                entityBlas = AccelStruct.recordBuild(frameCmd, build, nEnt * 2,
+                        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, stack, scratchSink);
+            }
+            entityQuads = nEnt;
+
+            // === ОСАДКИ: свой BLAS из того же буфера, вершины со смещением на nEnt квадов ===
+            // Индексный буфер общий: индексы относительны базы вершин, поэтому подходит как есть.
+            if (nWea > 0) {
+                VkAccelerationStructureGeometryKHR.Buffer wgeo = VkAccelerationStructureGeometryKHR.calloc(1, stack);
+                wgeo.get(0).sType$Default()
+                        .geometryType(VK_GEOMETRY_TYPE_TRIANGLES_KHR)
+                        .flags(DeviceManager.rtTextureArraySupported ? 0 : VK_GEOMETRY_OPAQUE_BIT_KHR);
+                var wtri = wgeo.get(0).geometry().triangles();
+                wtri.sType$Default()
+                        .vertexFormat(VK_FORMAT_R32G32B32_SFLOAT)
+                        .vertexStride(RtEntities.STRIDE).maxVertex(nWea * 4 - 1)
+                        .indexType(VK_INDEX_TYPE_UINT32);
+                weatherVtxBase = entityVtx.address + (long) nEnt * 4 * RtEntities.STRIDE;
+                wtri.vertexData().deviceAddress(weatherVtxBase);
+                wtri.indexData().deviceAddress(quadIndex.address);
+
+                VkAccelerationStructureBuildGeometryInfoKHR.Buffer wbuild =
+                        VkAccelerationStructureBuildGeometryInfoKHR.calloc(1, stack);
+                wbuild.get(0).sType$Default()
+                        .type(VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR)
+                        .flags(VK_BUILD_ACCELERATION_STRUCTURE_PREFER_FAST_BUILD_BIT_KHR)
+                        .mode(VK_BUILD_ACCELERATION_STRUCTURE_MODE_BUILD_KHR)
+                        .pGeometries(wgeo).geometryCount(1);
+
+                weatherBlas = AccelStruct.recordBuild(frameCmd, wbuild, nWea * 2,
+                        VK_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL_KHR, stack, scratchSink);
+                weatherQuadsN = nWea;
+            }
             entCamX = RtEntities.camXf(); entCamY = RtEntities.camYf(); entCamZ = RtEntities.camZf();
             if (entityLogged++ % 200 == 0) {
                 StringBuilder sb = new StringBuilder();
@@ -686,6 +741,11 @@ public class RtWorld {
             if (entityVtx != null) { deferBuf(entityVtx); entityVtx = null; }
             if (entityQuadTex != null) { deferBuf(entityQuadTex); entityQuadTex = null; }
             entityBlas = null; entityQuads = 0;
+            // M8.147 ОБЯЗАТЕЛЬНО: BLAS осадков ссылается на ХВОСТ entityVtx, который здесь уже
+            // отдан на освобождение — оставить его значило бы держать висячий указатель на
+            // освобождённую память (наш давний класс багов). Не deferAS: прошлый BLAS осадков
+            // уже отложен в начале перестройки, повторная отдача была бы двойным освобождением.
+            weatherBlas = null; weatherQuadsN = 0; weatherVtxBase = 0;
         }
     }
 
@@ -711,7 +771,8 @@ public class RtWorld {
 
             recordEntityBlas(frameCmd, stack, scratchSink);   // entity-BLAS в кадровый буфер (async)
 
-            int count = sections.size() + (entityBlas != null ? 1 : 0);
+            int count = sections.size() + (entityBlas != null ? 1 : 0)
+                                        + (weatherBlas != null ? 1 : 0);   // M8.146: +инстанс осадков
             if (count == 0) return;
 
             ensureInstanceBuffer(count);   // новый буфер каждый кадр -> старый в кольцо (GPU читает его в этом сабмите)
@@ -788,6 +849,32 @@ public class RtWorld {
                         .accelerationStructureReference(entityBlas.deviceAddress);
                 table.put(i, entityVtx.address);
                 i++;
+            }
+            // === M8.146: ИНСТАНС ОСАДКОВ — маска 0x04 ===
+            // Вторичные лучи (тени/отражения/амбиент) ходят маской 0x03 и этот инстанс НЕ ВИДЯТ:
+            // аппаратный пропуск, BVH дождя не обходится вовсе. Первичный луч идёт 0xFF — видит.
+            // Шейдер опознаёт осадки по индексу инстанса (приходит в rtCfg7.x), а слот их текстуры —
+            // в rtCfg7.y: у осадков она одна на кадр, поэтому per-quad quadTex им не нужен.
+            weatherInstanceIdx = -1;
+            if (weatherBlas != null) {
+                VkAccelerationStructureInstanceKHR w = inst.get(i);
+                var wm = w.transform().matrix();
+                wm.put(0, 1f).put(1, 0f).put(2, 0f).put(3, (float) entCamX);
+                wm.put(4, 0f).put(5, 1f).put(6, 0f).put(7, (float) entCamY);
+                wm.put(8, 0f).put(9, 0f).put(10, 1f).put(11, (float) entCamZ);
+                w.instanceCustomIndex(ENTITY_FLAG | i).mask(0x04).instanceShaderBindingTableRecordOffset(0)
+                        .flags(VK_GEOMETRY_INSTANCE_TRIANGLE_FACING_CULL_DISABLE_BIT_KHR)
+                        .accelerationStructureReference(weatherBlas.deviceAddress);
+                table.put(i, weatherVtxBase);        // вершины осадков = хвост общего буфера
+                weatherInstanceIdx = i;
+                i++;
+                // ДИАГНОСТИКА M8.146 (временно): капли рисуются чужой текстурой — смотрим реальные числа
+                if ((entityLogged % 200) == 0) {
+                    Initializer.LOGGER.info(
+                            "[RT] ОСАДКИ: квадов {} (сущностей {}), инстанс #{}, слот текстуры {}, всего текстур {}",
+                            weatherQuadsN, entityQuads, weatherInstanceIdx,
+                            RtEntities.weatherSlot(), entityTexList.length);
+                }
             }
             vkUnmapMemory(Vulkan.getVkDevice(), vtxAddrTable.memory);
             vkUnmapMemory(Vulkan.getVkDevice(), instanceBuffer.memory);

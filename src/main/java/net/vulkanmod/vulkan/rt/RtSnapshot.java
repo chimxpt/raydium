@@ -101,6 +101,7 @@ public class RtSnapshot {
                               // z = дальность АМБИЕНТА, w = качество марша ОБЛАКОВ (0 = полное)
                 vec4 rtCfg5;  // x = АЛЬФА-МЕТКИ пака (M8.126), y = ИЗМЕРЕНИЕ (0 верх, 1 ад, 2 энд), zw = ЦЕНТР XZ ГЛАДИ ПОРТАЛА (M8.144)
                 vec4 rtCfg6;  // xyz = ЦВЕТ ТУМАНА АДА по биому (M8.133), w = Y ГЛАДИ ПОРТАЛА ЭНДА (M8.144, <-1e8 = нет)
+                vec4 rtCfg7;  // M8.146: x = индекс TLAS-инстанса ОСАДКОВ (-1 = нет), y = слот их текстуры, zw — резерв
             } cam;
 
             // ⚠️⚠️ НОМЕР КАДРА В ЗЕРНЕ — БЕЗ ЭТОГО ДЕНОЙЗЕР БЕСПОЛЕЗЕН.
@@ -314,7 +315,12 @@ public class RtSnapshot {
             #define TORCH_AMOUNT TORCH_AMOUNT_f()
             // Пол яркости: «чёрный» не должен быть угольным нулём — в реальном зрении
             // абсолютно чёрных теней не бывает (значения свои).
-            const vec3  MIN_LIGHT_BASE = vec3(0.016, 0.017, 0.024);   // чуть холодный
+            // M8.145: подняли ~2.5x. В Deep Dark / глубоких пещерах и skyL, и blockL = 0, поэтому
+            // эмбиент падал ровно до этого минимума -> кадр почти чёрный (репорт по Ancient City).
+            // В освещённых сценах эта добавка пренебрежимо мала, так что подъём трогает ТОЛЬКО тьму:
+            // формы читаются, настроение и контраст цветного света (скалк/свечи) сохраняются.
+            // Пользователь может докрутить ползунком «минимальный свет» (cam.rtCfg3.y).
+            const vec3  MIN_LIGHT_BASE = vec3(0.042, 0.045, 0.060);   // чуть холодный
             vec3 MIN_LIGHT_f(){ return MIN_LIGHT_BASE * cam.rtCfg3.y; }
             #define MIN_LIGHT MIN_LIGHT_f()
 
@@ -955,6 +961,7 @@ public class RtSnapshot {
             // «Занавес»: лента по шуму (изгиб warp'ом), вертикальные лучи, зелёный низ ->
             // фиолетовый верх. Сила cam.rtCfg3.w приходит из Java (снежный биом, плавно ~6 с).
             vec3 aurora(vec3 d){
+                return vec3(0.0);   // M8.144r: северное сияние ВРЕМЕННО отключено (просьба). Вернуть — убрать эту строку.
                 float a = cam.rtCfg3.w;
                 if (a < 0.01 || d.y < 0.04) return vec3(0.0);
                 float T = params.y / 20.0;
@@ -1278,23 +1285,33 @@ public class RtSnapshot {
             }
             #endif
 
+            // M8.147 ФЛАГИ КВАДА С ПОПРАВКОЙ НА ОСАДКИ.
+            // ⚠️ quadTex[] индексируется номером квада, а prim>>1 — это номер ВНУТРИ своего BLAS.
+            // Для сущностей одно и то же, но с M8.146 у осадков СВОЙ BLAS: там prim>>1 даёт 0..N,
+            // тогда как записи капель лежат в массиве ПОСЛЕ сущностей (со смещения weatherStart).
+            // Читая напрямую, капля получала запись чужого моба — и, что хуже, его НЕПРОЗРАЧНУЮ
+            // текстуру в альфа-тесте обхода: тест пропускал все тексели и рисовал квад целиком
+            // вместо тонкой струи (репорт: капли «кашей»). Поэтому осадкам отдаём флаг «частица»
+            // и слот текстуры из конфига — оба известны без массива.
+            uint quadFlags(uint iId, uint prim){
+                if (cam.rtCfg7.x >= 0.0 && abs(float(iId) - cam.rtCfg7.x) < 0.5)
+                    return 0x20000000u | uint(cam.rtCfg7.y + 0.5);
+                return quadTex[prim >> 1u];
+            }
+
             bool candAlphaPass(rayQueryEXT rq, uint purpose){
                 uint raw  = uint(rayQueryGetIntersectionInstanceCustomIndexEXT(rq, false));
-                // M8.144m: ВТОРИЧНЫЕ лучи (тени 1/4, амбиент 2/5, ОТРАЖЕНИЕ 3) НЕ видят ДОЖДЬ/СНЕГ.
-                // Капли тени не отбрасывают, не в амбиенте и НЕ отражаются в воде (визуально верно),
-                // а альфа-тест КАЖДОЙ капли вдоль луча дорог -> отсекаем ДО фетча = крупный выигрыш
-                // при взгляде на воду и в дождь. Первичный луч (purpose 0) дождь видит — его не трогаем.
-                if (purpose >= 1u && purpose <= 5u && (raw & 0x800000u) != 0u) {
-                    uint primW = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
-                    if ((quadTex[primW >> 1u] & 0x10000000u) != 0u) return false;   // WEATHER_FLAG -> мимо
-                }
+                // ⚠️ M8.146: прежний программный скип осадков (M8.144m) УБРАН — он не работал надёжно
+                // и стоил чтения quadTex на каждом кандидате. Теперь осадки живут в ОТДЕЛЬНОМ BLAS
+                // с маской 0x04, а вторичные лучи ходят маской 0x03 -> капли отсекаются АППАРАТНО,
+                // до обхода их BVH вообще (это чинит и «капли в отражениях», и стоимость дождя).
                 // Проход-6 (оверлей руки, рисуется ПОВЕРХ мира как ванильный вьюмодел):
                 // подтверждаем ТОЛЬКО кванты руки (бит 30 quadTex), всё остальное — мимо.
                 if (purpose == 6u) {
             #ifdef ENT_TEX
                     if ((raw & 0x800000u) == 0u) return false;                       // не сущность
                     uint prim6 = uint(rayQueryGetIntersectionPrimitiveIndexEXT(rq, false));
-                    uint qt6 = quadTex[prim6 >> 1u];
+                    uint qt6 = quadFlags(raw & 0x3FFFFFu, prim6);   // осадкам вернёт «частицу» -> не рука
                     if ((qt6 & 0x40000000u) == 0u) return false;                     // не рука
                     Verts vb6 = refs[raw & 0x3FFFFFu];
                     uvec3 tv6 = triVerts(prim6);
@@ -1341,7 +1358,7 @@ public class RtSnapshot {
                 uvec3 tv = triVerts(prim);
             #ifdef ENT_TEX
                 if ((raw & 0x800000u) != 0u) {               // сущность
-                    uint qt = quadTex[prim >> 1u];
+                    uint qt = quadFlags(iId, prim);
                     if ((qt & 0x80000000u) != 0u) {          // тело игрока
                         // первичный луч из глаза его ПРОПУСКАЕТ (не видишь своё лицо);
                         // тень/амбиент из МИРА — ловят (весь игрок даёт тень на землю).
@@ -1438,13 +1455,25 @@ public class RtSnapshot {
             vec3 lightTint(vec3 p){
                 int n = int(wparams.w);
                 vec3 acc = vec3(0.0); float wsum = 0.0;
+                // M8.147 ФОЛБЭК. Раньше точка, которую не покрыл НИ ОДИН источник из буфера,
+                // красилась тёплым TORCH_COL — глобальной догадкой «вокруг факелы». Но буфер
+                // капнут топ-192 ПО ДИСТАНЦИИ ДО КАМЕРЫ: стоит отлететь, и soul-фонарь из него
+                // вылетает, а его законно освещённые блоки внезапно желтеют (репорт: «синева не
+                // держится»). Берём оттенок БЛИЖАЙШЕГО живого источника — он почти всегда той же
+                // природы, что и выпавший. Стоимость нулевая: расстояние уже считаем.
+                vec3 nearCol = TORCH_COL; float nearD = 1e9;
                 for (int i = 0; i < n; i++){
                     vec4 pr = lights[i].posRange;
-                    float w = max(pr.w - distance(p, pr.xyz), 0.0) / 15.0;
+                    float d = distance(p, pr.xyz);
+                    float w = max(pr.w - d, 0.0) / 15.0;
                     w *= w;
                     acc += lights[i].col.rgb * w; wsum += w;
+                    if (d < nearD) { nearD = d; nearCol = lights[i].col.rgb; }
                 }
-                return wsum > 1e-5 ? acc / wsum : TORCH_COL;
+                // Если поблизости честно НИЧЕГО нет — плавно возвращаемся к старому тёплому
+                // допущению: далёкий источник не вправе диктовать оттенок целой пещере.
+                return wsum > 1e-5 ? acc / wsum
+                                   : mix(nearCol, TORCH_COL, smoothstep(32.0, 96.0, nearD));
             }
 
             // M8.7 ЭМИССИЯ: сам источник должен СВЕТИТЬСЯ (пламя факела, лава, светокамень).
@@ -1579,7 +1608,7 @@ public class RtSnapshot {
             // тело и руку, но мобы/блоки по-прежнему дают тень.
             bool inShadowDist(vec3 o, vec3 dir, float maxd){
                 rayQueryEXT rq;
-                rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, o, 0.001, dir, maxd);
+                rayQueryInitializeEXT(rq, tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, o, 0.001, dir, maxd);
                 walkRay(rq, 4u);
                 return rayQueryGetIntersectionTypeEXT(rq, true)
                         == gl_RayQueryCommittedIntersectionTriangleEXT;
@@ -1695,7 +1724,7 @@ public class RtSnapshot {
                 if (cam.rtCfg.x < 0.5) return false;   // тени выключены в настройках -> луч не пускаем
                 rayQueryEXT rq;
                 rayQueryInitializeEXT(rq, tlas,
-                        gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, o, 0.001, dir, cam.rtCfg4.x);
+                        gl_RayFlagsTerminateOnFirstHitEXT, 0x03, o, 0.001, dir, cam.rtCfg4.x);
                 // Тело игрока всегда даёт тень; рука занавешивает ТОЛЬКО лучи от самой руки (4).
                 walkRay(rq, fromHand ? 4u : 1u);
                 return rayQueryGetIntersectionTypeEXT(rq, true)
@@ -1784,7 +1813,7 @@ public class RtSnapshot {
                     p0 = entPos(vb,tv.x); e1 = entPos(vb,tv.y)-p0; e2 = entPos(vb,tv.z)-p0;
                     vec4 c = unpackUnorm4x8(vb.w[tv.x*9u + 3u]);
             #ifdef ENT_TEX
-                    vec4 etxR = entFetch(quadTex[prim >> 1u] & 0xFFFFu, entUV(vb, tv, bary));
+                    vec4 etxR = entFetch(quadFlags(iId, prim) & 0xFFFFu, entUV(vb, tv, bary));
                     albedoS = etxR.rgb * c.rgb;
                     a3dGlowR = etxR.a > 1.5;   // M8.126: фулбрайт-метка пака — светится и в отражении
             #else
@@ -1848,7 +1877,7 @@ public class RtSnapshot {
                 }                                                    // но НЕ мобы, задевшие клетку факела
             #ifdef ENT_TEX
                 // светящийся слой сущности светит и в отражении/сквозь воду
-                if (isEnt && ((quadTex[prim >> 1u] & 0x04000000u) != 0u || a3dGlowR)) outc = albedo * EMISSIVE_GAIN;
+                if (isEnt && ((quadFlags(iId, prim) & 0x04000000u) != 0u || a3dGlowR)) outc = albedo * EMISSIVE_GAIN;
             #endif
                 // светящийся спрут светится и в отражениях воды (см. main)
                 if (isEnt) {
@@ -1885,7 +1914,7 @@ public class RtSnapshot {
                 rayQueryEXT rq;
                 // M8.144l: в ДОЖДЬ укорачиваем луч отражения — дальние отражения тонут в тумане,
                 // а луч меньше пробивает стену дождя (вода = главная просадка при взгляде на неё).
-                rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoneEXT, 0xFF, ro, 0.02, rd,
+                rayQueryInitializeEXT(rq, tlas, gl_RayFlagsNoneEXT, 0x03, ro, 0.02, rd,
                         cam.rtCfg4.y * mix(1.0, 0.42, rainF()));
                 walkRay(rq, 3u);   // отражение: сквозь воду; тело игрока — только с расстояния
                 if (rayQueryGetIntersectionTypeEXT(rq, true) == gl_RayQueryCommittedIntersectionTriangleEXT)
@@ -1909,7 +1938,7 @@ public class RtSnapshot {
                 vec2 uv = entUV(vb, tv, bary);   // геометрию искажает НАСТОЯЩЕЕ преломление луча (см. вызов)
                 vec4 vc = unpackUnorm4x8(vb.w[tv.x*9u + 3u]);
             #ifdef ENT_TEX
-                vec4 tx = entFetch(quadTex[prim >> 1u] & 0xFFFFu, uv);
+                vec4 tx = entFetch(quadFlags(iId, prim) & 0xFFFFu, uv);
             #else
                 vec4 tx = vec4(0.8);
             #endif
@@ -1941,7 +1970,7 @@ public class RtSnapshot {
                 for (int i = 0; i < 3; i++) {
                     vec3 ad = cosineDirStrat(nrm, seed, i, 3);
                     rayQueryEXT arq;
-                    rayQueryInitializeEXT(arq, tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0xFF, hp + nrm*0.02, 0.001, ad, 32.0);
+                    rayQueryInitializeEXT(arq, tlas, gl_RayFlagsTerminateOnFirstHitEXT, 0x03, hp + nrm*0.02, 0.001, ad, 32.0);
                     walkRay(arq, 5u);   // амбиент от руки: мир затеняет, тело/рука прозрачны
                     if (rayQueryGetIntersectionTypeEXT(arq, true) == gl_RayQueryCommittedIntersectionNoneEXT) {
                         skyLight += skyBase(ad);
@@ -2190,10 +2219,16 @@ public class RtSnapshot {
                         isWater = false; p1Water = false;
                     }
             #ifdef ENT_TEX
-                    bool isWeather = isEnt && (quadTex[prim >> 1u] & 0x10000000u) != 0u;  // капля дождя/снега
-                    bool isPartic  = isEnt && (quadTex[prim >> 1u] & 0x20000000u) != 0u;  // частица
-                    bool isBolt    = isEnt && (quadTex[prim >> 1u] & 0x08000000u) != 0u;  // МОЛНИЯ
-                    bool isEmis    = isEnt && (quadTex[prim >> 1u] & 0x04000000u) != 0u;  // светящийся слой
+                    // M8.146: ОСАДКИ живут в ОТДЕЛЬНОМ BLAS, а у него prim'ы идут С НУЛЯ — значит
+                    // quadTex для капель читать НЕЛЬЗЯ (попадём в чужой квад). Опознаём каплю по
+                    // ИНДЕКСУ ИНСТАНСА (rtCfg7.x), а слот её текстуры берём из rtCfg7.y: у осадков
+                    // текстура одна на кадр, поэтому per-quad таблица им и не нужна.
+                    bool isWeather = isEnt && cam.rtCfg7.x >= 0.0
+                                            && abs(float(iId) - cam.rtCfg7.x) < 0.5;
+                    uint qtf = quadFlags(iId, prim);   // у осадков — «частица» + слот из конфига
+                    bool isPartic  = isEnt && (qtf & 0x20000000u) != 0u;  // частица
+                    bool isBolt    = isEnt && (qtf & 0x08000000u) != 0u;  // МОЛНИЯ
+                    bool isEmis    = isEnt && (qtf & 0x04000000u) != 0u;  // светящийся слой
             #else
                     bool isWeather = false;
                     bool isPartic  = false;
@@ -2277,7 +2312,7 @@ public class RtSnapshot {
                                 vec3 gad = cosineDirStrat(gn, gseed, gi, 4);
                                 rayQueryEXT garq;
                                 rayQueryInitializeEXT(garq, tlas, gl_RayFlagsTerminateOnFirstHitEXT,
-                                        0xFF, hp + gn*0.02, 0.001, gad, 64.0);
+                                        0x03, hp + gn*0.02, 0.001, gad, 64.0);
                                 walkRay(garq, 2u);
                                 if (rayQueryGetIntersectionTypeEXT(garq, true)
                                         == gl_RayQueryCommittedIntersectionNoneEXT) gskyL += skyBase(gad);
@@ -2554,8 +2589,9 @@ public class RtSnapshot {
                             float sp = pow(max(dot(reflect(dir, wn), normalize(hlPos - hp)), 0.0), 400.0);
                             col += handCol.rgb * sp * hlLvl * 1.4;
                         }
+                        // M8.147: подземная вода тоже тонет в темноте, а не в ярком небе
                         float fogw = fogAmt(t);
-                        col = mix(col, skyBase(dir), fogw);
+                        col = mix(col, mix(MIN_LIGHT * 2.0, skyBase(dir), smoothstep(0.0, 0.35, wlm.y)), fogw);
                         }   // конец ветки ВОДЫ (else от transMat)
                     } else {
                     // Геометрическая нормаль из настоящих вершин + альбедо по типу
@@ -2569,10 +2605,12 @@ public class RtSnapshot {
             #ifdef ENT_TEX
                         // ⚠️ У молнии (бит 27) ТЕКСТУРЫ НЕТ — выборка из чужой по нулевым UV дала бы мусор.
                         // Её цвет задан прямо в вершинах (ваниль так и рисует болт).
-                        if ((quadTex[prim >> 1u] & 0x08000000u) != 0u) {
+                        if ((qtf & 0x08000000u) != 0u) {
                             albedoS = c.rgb;
                         } else {
-                            vec4 etx = entFetch(quadTex[prim >> 1u] & 0xFFFFu, entUV(vb, tv, bary));
+                            // M8.147: слот уже разрешён в quadFlags (у осадков — из униформы rtCfg7.y,
+                            // т.к. их prim'ы указывали бы на чужой квад в общем массиве).
+                            vec4 etx = entFetch(qtf & 0xFFFFu, entUV(vb, tv, bary));
                             albedoS = etx.rgb * c.rgb;
                             if (etx.a > 1.5) isEmis = true;   // M8.126: фулбрайт-метка пака
                         }
@@ -2641,7 +2679,7 @@ public class RtSnapshot {
                         vec3 ad = cosineDirStrat(nrm, seed, i, nAmb);
                         rayQueryEXT arq;
                         rayQueryInitializeEXT(arq, tlas, gl_RayFlagsTerminateOnFirstHitEXT,
-                                0xFF, hp + nrm*0.02, 0.001, ad, cam.rtCfg4.z);
+                                0x03, hp + nrm*0.02, 0.001, ad, cam.rtCfg4.z);
                         walkRay(arq, 2u);   // амбиент мира — тело игрока затеняет, рука прозрачна
                         if (rayQueryGetIntersectionTypeEXT(arq, true)
                                 == gl_RayQueryCommittedIntersectionNoneEXT) {
@@ -2845,8 +2883,11 @@ public class RtSnapshot {
                         float pndv = max(dot(-dir, nrm), 0.0);
                         float pF = 0.03 + 0.97 * pow(1.0 - pndv, 5.0);  // отражает СОВСЕМ немного в лоб
                         vec3 prefl = traceShade(hp + nrm * 0.02, reflect(dir, nrm), smoothstep(0.0, 0.5, skyL));
-                        // 22% СВОЕЙ поверхности — текстура льда ЧИТАЕТСЯ, но блок остаётся прозрачным
-                        col = mix(mix(pthru, col, 0.22), prefl, pF);
+                        // M8.144s: ПЛОТНЫЙ ЛЁД (packed ice) в ванили НЕПРОЗРАЧНЫЙ. Прежнее преломление
+                        // сквозь него давало тёмные глюки на айсбергах (просьба убрать). Теперь как
+                        // синий лёд: опаковый, лёгкий холодный оттенок + френелевский блеск. pthru
+                        // больше не используется -> цикл преломления выше = мёртвый код (выкидывается).
+                        col = mix(col * vec3(0.92, 0.97, 1.06), prefl, pF * 0.5);
                     }
                     // === МОЛНИЯ (M8.46): чистая плазма — ярче всего в кадре, текстуры у неё нет ===
                     if (isBolt) {
@@ -2911,8 +2952,12 @@ public class RtSnapshot {
                         col = tint * (0.10 + 0.85 * skyLum) * (0.35 + 0.65 * skyVis);
                     }
                     // Дымка только СИЛЬНО вдали (старт ~128 блоков, мягкий набор)
+                    // M8.147: ЦВЕТ дымки следует за доступом к НЕБУ. Под землёй (skyL=0) даль обязана
+                    // тонуть в ТЕМНОТЕ, а раньше подмешивалось яркое skyBase — и пещерная даль
+                    // СВЕТЛЕЛА (репорт: «туман в пещерах светлый, должен быть тёмным»).
                     float fog = fogAmt(t);
-                    col = mix(col, skyBase(dir), fog);
+                    vec3 fogCol = mix(MIN_LIGHT * 2.0, skyBase(dir), smoothstep(0.0, 0.35, skyL));
+                    col = mix(col, fogCol, fog);
                     }
                 } else {
                     col     = skyBase(dir) + stars(dir);   // фон гаснет за тучами линейно
@@ -4029,11 +4074,18 @@ public class RtSnapshot {
             // M8.133: rtCfg6 — цвет тумана Ада по биому (наша палитра); w = Y глади портала Энда (M8.144, sentinel<-1e8 = нет)
             camMap.putFloat(cfgOff + 80, netherFogR).putFloat(cfgOff + 84, netherFogG)
                   .putFloat(cfgOff + 88, netherFogB).putFloat(cfgOff + 92, endPortalY);
+            // M8.146: rtCfg7 — осадки в отдельном BLAS: индекс их инстанса (шейдер опознаёт попадание)
+            // + слот их текстуры (у осадков она одна на кадр, per-quad quadTex им не нужен).
+            camMap.putFloat(cfgOff + 96,  (float) RtWorld.weatherInstanceIdx)
+                  .putFloat(cfgOff + 100, (float) RtEntities.weatherSlot())
+                  .putFloat(cfgOff + 104, 0f).putFloat(cfgOff + 108, 0f);
 
             VkDescriptorBufferInfo.Buffer camInfo = VkDescriptorBufferInfo.calloc(1, stack);
             // M8.126: +80, а не +64 — добавился rtCfg5 (диапазон обязан покрывать ВЕСЬ cam-блок,
             // иначе чтение rtCfg5 упрётся в границу дескриптора и вернёт мусор)
-            camInfo.get(0).buffer(camUbo.buffer).offset(camOff).range(96 + OUTLINE_MAX_EDGES * 32 + 96);
+            // M8.146: +16 Б под rtCfg7 (осадки) -> cfg-блок теперь 7 vec4 = 112 Б.
+            // ⚠️ Диапазон обязан покрывать ВЕСЬ cam-блок, иначе чтение rtCfg7 упрётся в границу и вернёт мусор.
+            camInfo.get(0).buffer(camUbo.buffer).offset(camOff).range(96 + OUTLINE_MAX_EDGES * 32 + 112);
 
             VkWriteDescriptorSet.Buffer w = VkWriteDescriptorSet.calloc(20, stack);
             w.get(12).sType$Default().dstSet(descSet).dstBinding(1)
