@@ -102,6 +102,7 @@ public class RtSnapshot {
                 vec4 rtCfg5;  // x = АЛЬФА-МЕТКИ пака (M8.126), y = ИЗМЕРЕНИЕ (0 верх, 1 ад, 2 энд), zw = ЦЕНТР XZ ГЛАДИ ПОРТАЛА (M8.144)
                 vec4 rtCfg6;  // xyz = ЦВЕТ ТУМАНА АДА по биому (M8.133), w = Y ГЛАДИ ПОРТАЛА ЭНДА (M8.144, <-1e8 = нет)
                 vec4 rtCfg7;  // M8.146: x = индекс TLAS-инстанса ОСАДКОВ (-1 = нет), y = слот их текстуры, zw — резерв
+                vec4 rtCfg8;  // M8.153 ОБЪЁМ ЦВЕТА СВЕТА: xyz = НАЧАЛО решётки в блоках, w = готова ли (0/1)
             } cam;
 
             // ⚠️⚠️ НОМЕР КАДРА В ЗЕРНЕ — БЕЗ ЭТОГО ДЕНОЙЗЕР БЕСПОЛЕЗЕН.
@@ -127,6 +128,10 @@ public class RtSnapshot {
             };
             // Таблица инстанс(instanceCustomIndex) → ссылка на вершины его секции.
             layout(std430, binding = 2) readonly buffer VtxTable { Verts refs[]; };
+            // M8.153: решётка ОТТЕНКА света вокруг камеры (64^3 ячеек по 2 блока = 128^3 блоков).
+            // Упаковка RGBA8 в uint: цвет уже СМЕШАН и НОРМИРОВАН (чистый оттенок, без яркости),
+            // альфа = «в этой ячейке вообще есть свет». Яркость по-прежнему из вершинного lightmap.
+            layout(std430, binding = 20) readonly buffer LightVol { uint lvox[]; };
 
             layout(binding = 3) uniform sampler2D atlas;
             layout(binding = 7) uniform sampler2D noisetex;    // НАША текстура шума (M8.95: эффекты, облака)
@@ -1126,7 +1131,12 @@ public class RtSnapshot {
                 float u2 = (float(sy) + rnd(seed)) / float(ny);
                 return cosineDirUV(n, u1, u2);
             }
-
+            """,
+            // M8.153: блок ШЕЙДЕРА РАЗБИТ НАДВОЕ. Причина не в логике: строковая константа
+            // в class-файле не может превышать 64 КБ в UTF-8, а кириллица занимает по два
+            // байта на символ — комментарии перевесили. Склейка идёт по порядку, поэтому на
+            // сам GLSL разрез не влияет; резать только по границе функций.
+            """
             vec2 vUV(Verts vb, uint vi){
                 uint p = vb.w[vi*4u + 2u];
                 // Расшифровка как в terrain.vsh VulkanMod: UV0 * (1/32768)
@@ -1448,11 +1458,51 @@ public class RtSnapshot {
                 return blockLightCurve(lm) * col * TORCH_AMOUNT;
             }
 
+            // M8.153 ОТТЕНОК ИЗ ОБЪЁМА — основной путь. Решётка запечена на процессоре по ПОЛНОМУ
+            // списку источников и привязана к МИРУ, поэтому не зависит ни от того, что попало в
+            // буфер ближних 192, ни от поворота камеры. Читаем трилинейно (8 выборок) — переход
+            // между ячейками плавный, «кубиков» оттенка не видно.
+            const int   LV_NX = 64, LV_NY = 64, LV_NZ = 64;
+            const float LV_CELL = 2.0;
+
+            vec4 lvFetch(ivec3 c){
+                if (any(lessThan(c, ivec3(0))) || any(greaterThanEqual(c, ivec3(LV_NX, LV_NY, LV_NZ))))
+                    return vec4(0.0);
+                uint v = lvox[(c.y * LV_NZ + c.z) * LV_NX + c.x];
+                return vec4(float( v        & 0xFFu), float((v >>  8) & 0xFFu),
+                            float((v >> 16) & 0xFFu), float((v >> 24) & 0xFFu)) / 255.0;
+            }
+
+            bool volTint(vec3 p, out vec3 tint){
+                if (cam.rtCfg8.w < 0.5) return false;              // решётка ещё не запечена
+                vec3 g = (p - cam.rtCfg8.xyz) / LV_CELL - 0.5;     // координата в ЦЕНТРАХ ячеек
+                ivec3 c0 = ivec3(floor(g));
+                vec3  f  = g - vec3(c0);
+                vec4 acc = vec4(0.0);
+                for (int i = 0; i < 8; i++){
+                    ivec3 o = ivec3(i & 1, (i >> 1) & 1, (i >> 2) & 1);
+                    vec3 wv = mix(1.0 - f, f, vec3(o));
+                    acc += lvFetch(c0 + o) * (wv.x * wv.y * wv.z);
+                }
+                if (acc.a < 0.02) return false;                    // тут света нет -> старый путь
+                tint = acc.rgb / max(acc.a, 1e-4);   // делим на АЛЬФУ, иначе пустые соседи разбавляют
+                float m = max(tint.r, max(tint.g, tint.b));
+                if (m > 1e-4) tint /= m;                           // чистый оттенок, без яркости
+                return true;
+            }
+
             // M8.7 ОТТЕНОК СВЕТА В ТОЧКЕ. ЯРКОСТЬ берём из вершинного lightmap (там ванильная
             // заливка — свет честно затекает за углы), а ЦВЕТ смешиваем по ближним источникам.
             // Вес = ванильный уровень (дальность - расстояние), в квадрате: ближний фонарь
             // перебивает дальний, и на стыке двух ламп цвета плавно переходят.
             vec3 lightTint(vec3 p){
+                // M8.153: сперва спрашиваем ОБЪЁМ. Он покрывает 128^3 блоков вокруг камеры и знает
+                // ВСЕ запечённые источники. Ниже — прежний путь по буферу: он остаётся для того,
+                // что запечь нельзя (динамика: факел в руке, горящие мобы, брошенные предметы) и
+                // для точек за границей решётки.
+                vec3 vtint;
+                if (volTint(p, vtint)) return vtint;
+
                 int n = int(wparams.w);
                 vec3 acc = vec3(0.0); float wsum = 0.0;
                 // M8.147 ФОЛБЭК. Раньше точка, которую не покрыл НИ ОДИН источник из буфера,
@@ -1466,7 +1516,26 @@ public class RtSnapshot {
                     vec4 pr = lights[i].posRange;
                     float d = distance(p, pr.xyz);
                     float w = max(pr.w - d, 0.0) / 15.0;
+                    // ⚠️ M8.149: КВАДРАТ, и повышать степень НЕЛЬЗЯ — проверено на живой сцене.
+                    // История: в M8.148 я поднял до ^8, чтобы один сильный источник побеждал толпу
+                    // слабых (скалк выдавливал оттенок ламп). Лечило симптом, а породило хуже:
+                    // ^8 — это почти «победитель забирает всё», пол разбивался на участки-Вороного
+                    // с резкими швами, и при движении камеры состав буфера (192 слота на 280 тысяч
+                    // источников) менялся -> победитель в области скакал -> ПЯТНА РВАНО МИГАЛИ.
+                    // Причину убрали в корне: у фосфора отобрано право голоса (ниже), и квадрата
+                    // хватает с запасом — свеча в 2 блоках даёт 0.44 против 0.071 у двух десятков
+                    // блоков скалка, то есть 86% голоса. Квадрат же держит переходы плавными.
                     w *= w;
+                    // M8.149 «ФОСФОР» (модель пользователя). Точечные источники (MODE_DOTS = скалк,
+                    // светящийся лишайник, светящиеся лозы) СВЕТЯТСЯ САМИ, но на округу почти
+                    // ничего не бросают — как фосфор: в темноте виден, а рядом со свечой его
+                    // вклад в цвет ничтожен. Раньше они голосовали наравне с настоящими лампами,
+                    // и пол между свечами Ancient City оставался бирюзовым вместо тёплого.
+                    // ⚠️ Право голоса режем, но НЕ обнуляем: оттенок нормируется (acc/wsum),
+                    // поэтому там, где других источников нет, скалк по-прежнему забирает весь
+                    // голос и красит свою нишу бирюзой. Само свечение точек (emissiveAt) не
+                    // трогаем вовсе — оно живёт отдельно от этого веса.
+                    if (lights[i].col.w > 5.5) w *= 0.05;
                     acc += lights[i].col.rgb * w; wsum += w;
                     if (d < nearD) { nearD = d; nearCol = lights[i].col.rgb; }
                 }
@@ -1548,7 +1617,7 @@ public class RtSnapshot {
                             float fl = 0.72 + 0.28 * sin(params.y * 0.6
                                        + dot(floor(pHit * 3.0), vec3(1.7, 2.3, 3.1)));   // живое мерцание
                             return albedoLin * col * m * EMIS_BRIGHT * 1.5 * fl;
-                        } else if (mode > 1.5 && mode < 2.5) {
+                        } else if ((mode > 1.5 && mode < 2.5) || mode > 5.5) {   // M8.149: +фосфор
                             // КВАДРАТИКИ (лишайник): светятся ТОЛЬКО самые яркие тексели-огонёчки.
                             // ⚠️ Порог по sRGB-яркости (не линейной!): линейная занижена гаммой, и
                             // тусклое тело лишайника проскакивало -> светился весь блок. Высокий порог
@@ -1561,7 +1630,11 @@ public class RtSnapshot {
                             // давало тускло, а рядом зелёные листья. Десатурируем тексель к его
                             // ЯРКОСТИ и красим цветом источника (ягоды — оранж, лишайник — бирюза),
                             // + ярче -> ягоды/огоньки выделяются точками.
-                            return mix(albedoLin, vec3(luma), 0.6) * col * m * EMIS_BRIGHT * 1.8;
+                            // M8.149: ФОСФОР (скалк) горит ЗАМЕТНО ТУСКЛЕЕ настоящих источников —
+                            // просьба пользователя «сделать скалк тусклее». Лишайник и ягоды
+                            // (MODE_DOTS) яркость сохраняют: они светят и в ванилле.
+                            float dotGain = (mode > 5.5) ? 0.6 : 1.8;
+                            return mix(albedoLin, vec3(luma), 0.6) * col * m * EMIS_BRIGHT * dotGain;
                         } else if (mode > 0.5) {
                             // СВЕТЛЯЧКИ (куст). ⚠️ ИЗМЕРЕНО: светлячки firefly_bush нарисованы НЕ в
                             // базовой текстуре, а в ОТДЕЛЬНОЙ анимированной (16x160, 10 кадров). В базе
@@ -1627,7 +1700,7 @@ public class RtSnapshot {
 
             // M8.7 Динамический свет ПРЕДМЕТА В РУКЕ (стиль LambDynamicLights): точечный источник
             // у игрока + НАСТОЯЩИЙ теневой луч к нему -> факел отбрасывает реальные тени.
-            vec3 handheldLight(vec3 hp, vec3 nrm, float level, vec3 camPos){
+            vec3 handheldLight(vec3 hp, vec3 nrm, float level, vec3 camPos, float ambLm){
                 if (level < 0.01) return vec3(0.0);
                 vec3 lp = camPos - vec3(0.0, 0.35, 0.0);     // источник чуть ниже глаз (у руки)
                 vec3 ld = lp - hp;
@@ -1647,7 +1720,17 @@ public class RtSnapshot {
                 if (ndl <= 0.0) return vec3(0.0);
                 if (inShadowDist(hp + nrm*0.02, ldn, dist - 0.05)) return vec3(0.0);   // ТЕНЬ от факела
                 const float HELD_BOOST = 1.7;   // ярче поставленного: это твой единственный свет в пещере
-                return blockLightEclipse(lm, handCol.rgb) * ndl * HELD_BOOST;   // ЦВЕТ предмета (душ — голубой)
+                // M8.154 РУЧНОЙ СВЕТ МЕШАЕТСЯ С ОКРУЖАЮЩИМ (просьба пользователя). Раньше он клался
+                // ЧИСТЫМ цветом предмета отдельным слоем — и читался как прожектор поверх сцены, а
+                // не как часть освещения: встань с фонарём душ среди свечей, и пятно под ногами
+                // оставалось ледяным, хотя вокруг тёплый свет. Теперь оттенок сдвигается к смеси
+                // окружающих ламп ПРОПОРЦИОНАЛЬНО вкладам: где ламп нет (тёмная пещера) — остаётся
+                // чистый цвет предмета, где вокруг светло — сливается с их цветом.
+                // Оттенок окружения берём из ОБЪЁМА (lightTint), поэтому смесь честная и стабильная.
+                float hw = blockLightCurve(lm) * HELD_BOOST;
+                float aw = blockLightCurve(clamp(ambLm, 0.0, 1.0));
+                vec3 col = mix(handCol.rgb, lightTint(hp), aw / (aw + hw + 1e-4));
+                return blockLightEclipse(lm, col) * ndl * HELD_BOOST;
             }
 
             // M8.8 Динамический свет ГОРЯЩИХ МОБОВ (MODE_POINT). Как факел в руке, но источники —
@@ -1865,7 +1948,7 @@ public class RtSnapshot {
                     }
                 }
                 // + факел В РУКЕ: без него дно под водой оставалось чёрным, хотя берег был освещён
-                torch2 += handheldLight(hp, nrm, wparams.z, origin.xyz);
+                torch2 += handheldLight(hp, nrm, wparams.z, origin.xyz, lm2.x);
                 if (!isEnt) torch2 += dynamicPointLight(hp, nrm);   // свет горящих мобов (в отражениях)
                 vec3 lit2 = albedo * torch2;                       // тот же поджим пересвета, что в main
                 float lmax2 = max(lit2.r, max(lit2.g, lit2.b));
@@ -2733,7 +2816,7 @@ public class RtSnapshot {
                         }
                     }
                     // + ДИНАМИЧЕСКИЙ свет предмета в руке, с настоящей RT-тенью
-                    torch += handheldLight(hp, nrm, wparams.z, origin.xyz);
+                    torch += handheldLight(hp, nrm, wparams.z, origin.xyz, blockL);
                     // ⚠️ ЗАЩИТА БЕЛОГО МЕТАЛЛА (колпак фонаря = сам источник 15): «горячее пятно»
                     // блок-света выжигало его бело-жёлтые тексели в «светлячки». Для яркого
                     // НЕнасыщенного текселя приглушаем блок-свет (пламя — насыщенное — не трогаем).
@@ -3622,7 +3705,7 @@ public class RtSnapshot {
             // 0=TLAS, 1=вывод(SSBO), 2=таблица адресов(SSBO), 3=атлас(sampler2D),
             // 4=текстуры сущностей (sampler2D[256]), 5=квад->слот текстуры (SSBO),
             // 6=ЦВЕТНЫЕ ИСТОЧНИКИ СВЕТА (SSBO), 7=наша текстура шума (эффекты камеры) — M8.12/95
-            VkDescriptorSetLayoutBinding.Buffer binds = VkDescriptorSetLayoutBinding.calloc(20, stack);
+            VkDescriptorSetLayoutBinding.Buffer binds = VkDescriptorSetLayoutBinding.calloc(21, stack);   // M8.153: +объём света
             binds.get(0).binding(0).descriptorType(VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR)
                     .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
             binds.get(1).binding(1).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)   // M8.27: HDR-образ
@@ -3654,6 +3737,9 @@ public class RtSnapshot {
             for (int i = 14; i <= 19; i++)                                        // 14..19 = guide-буферы DLSS
                 binds.get(i).binding(i).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE)
                         .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
+            // M8.153: решётка оттенка света (см. RtLightVolume)
+            binds.get(20).binding(20).descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER)
+                    .descriptorCount(1).stageFlags(VK_SHADER_STAGE_COMPUTE_BIT);
             VkDescriptorSetLayoutCreateInfo dslInfo = VkDescriptorSetLayoutCreateInfo.calloc(stack)
                     .sType$Default().pBindings(binds);
             LongBuffer pDsl = stack.mallocLong(1);
@@ -4080,14 +4166,24 @@ public class RtSnapshot {
                   .putFloat(cfgOff + 100, (float) RtEntities.weatherSlot())
                   .putFloat(cfgOff + 104, 0f).putFloat(cfgOff + 108, 0f);
 
+            // M8.153 rtCfg8: НАЧАЛО решётки объёма света (мировые блоки) + признак готовности.
+            // Пока решётка не запечена (первые кадры после входа в мир, смена измерения), w = 0 и
+            // шейдер идёт прежним путём по буферу источников — переход незаметен.
+            boolean volOk = RtLightVolume.valid();
+            camMap.putFloat(cfgOff + 112, (float) RtLightVolume.originXf())
+                  .putFloat(cfgOff + 116, (float) RtLightVolume.originYf())
+                  .putFloat(cfgOff + 120, (float) RtLightVolume.originZf())
+                  .putFloat(cfgOff + 124, volOk ? 1f : 0f);
+
             VkDescriptorBufferInfo.Buffer camInfo = VkDescriptorBufferInfo.calloc(1, stack);
             // M8.126: +80, а не +64 — добавился rtCfg5 (диапазон обязан покрывать ВЕСЬ cam-блок,
             // иначе чтение rtCfg5 упрётся в границу дескриптора и вернёт мусор)
             // M8.146: +16 Б под rtCfg7 (осадки) -> cfg-блок теперь 7 vec4 = 112 Б.
             // ⚠️ Диапазон обязан покрывать ВЕСЬ cam-блок, иначе чтение rtCfg7 упрётся в границу и вернёт мусор.
-            camInfo.get(0).buffer(camUbo.buffer).offset(camOff).range(96 + OUTLINE_MAX_EDGES * 32 + 112);
+            // M8.153: диапазон вырос на 16 байт — добавился rtCfg8 (начало решётки объёма света)
+            camInfo.get(0).buffer(camUbo.buffer).offset(camOff).range(96 + OUTLINE_MAX_EDGES * 32 + 128);
 
-            VkWriteDescriptorSet.Buffer w = VkWriteDescriptorSet.calloc(20, stack);
+            VkWriteDescriptorSet.Buffer w = VkWriteDescriptorSet.calloc(21, stack);   // M8.153: +объём света
             w.get(12).sType$Default().dstSet(descSet).dstBinding(1)
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_IMAGE).descriptorCount(1).pImageInfo(outInfo);
             w.get(13).sType$Default().dstSet(descSet).dstBinding(13)
@@ -4124,6 +4220,13 @@ public class RtSnapshot {
                     .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).pBufferInfo(rippleInfo);
             w.get(11).sType$Default().dstSet(descSet).dstBinding(12)
                     .descriptorType(VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER).descriptorCount(1).pImageInfo(matInfo);
+            // M8.153 ОБЪЁМ ЦВЕТА СВЕТА. Буфер заводится по требованию и живёт всю сессию, поэтому
+            // привязка всегда указывает на живую память; читать её или нет, шейдер решает по
+            // флагу готовности в rtCfg8.w (пока решётка не запечена — идёт старым путём).
+            VkDescriptorBufferInfo.Buffer volInfo = VkDescriptorBufferInfo.calloc(1, stack);
+            volInfo.get(0).buffer(RtLightVolume.bufferHandle()).offset(0).range(VK_WHOLE_SIZE);
+            w.get(20).sType$Default().dstSet(descSet).dstBinding(20)
+                    .descriptorType(VK_DESCRIPTOR_TYPE_STORAGE_BUFFER).descriptorCount(1).pBufferInfo(volInfo);
             vkUpdateDescriptorSets(device, w, null);
 
             ByteBuffer push = stack.malloc(256);

@@ -63,6 +63,12 @@ public class RtLights {
     static final int MODE_FLAME   = 3;   // ПЛАМЯ (огонь, костёр): яркие тёплые тексели горят + мерцают
     static final int MODE_POINT   = 4;   // ДИНАМИЧЕСКИЙ огонь (горящий моб/игрок): только светит, не эмиссивит
     static final int MODE_FIRE    = 5;   // огонь-факел/фонарь: эмиссия как обычная, но СВЕТ на мир МЕРЦАЕТ
+    // M8.149 ФОСФОР (модель пользователя): «ярок только сам по себе; рядом с настоящим светом
+    // очень тускл и цвета почти не подмешивает». Это семейство скалка — в ванилле оно светит
+    // НОЛЬ (sculk/vein/shrieker = 0, sensor = 1), а свечение ему даём мы. Отличается от
+    // MODE_DOTS тем, что лишайник и ягоды — настоящие источники (ванильные 7 и 11), им голос
+    // в оттенке положен, а фосфору — почти нет.
+    static final int MODE_PHOS    = 6;   // фосфор: сам светится тускло, округу почти не красит
 
     // ---- Таблица «блок -> (цвет, дальность, ...)» — СОБСТВЕННАЯ палитра (M8.102):
     //      состав блоков вдохновлён шейдер-паками, значения цветов свои ----
@@ -106,7 +112,7 @@ public class RtLights {
         // ПЛАМЯ — режим MODE_FLAME: яркие тексели горят сильнее + мерцают (не тусклое тление)
         putEmis(m, "fire",              0.950f, 0.559f, 0.240f, 15f, 0, MODE_FLAME);
         putEmis(m, "campfire",          0.959f, 0.548f, 0.264f, 15f, 0, MODE_FLAME);
-        putEmis(m, "soul_campfire",     0.195f, 0.618f, 0.981f, 10f, 0, MODE_FLAME);
+        putEmis(m, "soul_campfire",     0.350f, 0.815f, 0.990f, 10f, 0, MODE_FLAME);
         putEmis(m, "jack_o_lantern",    0.857f, 0.604f, 0.360f, 15f, 0, MODE_FIRE);
         put(m, "shroomlight",           0.803f, 0.443f, 0.217f, 15f);
         put(m, "glowstone",             0.748f, 0.572f, 0.308f, 15f);
@@ -119,10 +125,10 @@ public class RtLights {
         put(m, "lava",                  0.987f, 0.291f, 0.112f, 15f);
         put(m, "magma_block",           0.715f, 0.325f, 0.105f,  3f);
         // --- ДУШИ: холодный сине-голубой ---
-        putEmis(m, "soul_torch",        0.096f, 0.596f, 1.000f, 10f, 0, MODE_FIRE);
-        putEmis(m, "soul_wall_torch",   0.095f, 0.618f, 1.000f, 10f, 0, MODE_FIRE);
-        put(m, "soul_lantern",          0.101f, 0.621f, 1.000f, 10f);   // закрытая лампа — НЕ мерцает
-        putEmis(m, "soul_fire",         0.189f, 0.635f, 1.000f, 10f, 0, MODE_FLAME);   // синее пламя душ
+        putEmis(m, "soul_torch",        0.330f, 0.800f, 1.000f, 10f, 0, MODE_FIRE);
+        putEmis(m, "soul_wall_torch",   0.330f, 0.810f, 1.000f, 10f, 0, MODE_FIRE);
+        put(m, "soul_lantern",          0.340f, 0.820f, 1.000f, 10f);   // закрытая лампа — НЕ мерцает
+        putEmis(m, "soul_fire",         0.350f, 0.825f, 1.000f, 10f, 0, MODE_FLAME);   // синее пламя душ
         // --- МЕДЬ (1.21.9+): зелёный ---
         putEmis(m, "copper_torch",      0.098f, 0.818f, 0.309f, 10f, 0, MODE_FIRE);
         putEmis(m, "copper_wall_torch", 0.101f, 0.844f, 0.313f, 10f, 0, MODE_FIRE);
@@ -172,10 +178,15 @@ public class RtLights {
         // Яркость вернули по просьбе — так красивее. Заливкой пещеры это больше не грозит: отбор
         // источников теперь идёт ПО ЗНАЧИМОСТИ (сила / расстояние), и скалк не вытесняет лаву.
         putEmis(m, "sculk_catalyst",    0.385f, 0.959f, 1.000f,  8f, 6, MODE_DOTS);
-        putEmis(m, "sculk_sensor",      0.388f, 0.945f, 1.000f,  6f, 4, MODE_DOTS);
-        putEmis(m, "sculk",             0.395f, 0.959f, 1.000f,  6f, 5, MODE_DOTS);
-        putEmis(m, "sculk_vein",        0.368f, 0.931f, 1.000f,  5f, 4, MODE_DOTS);
-        putEmis(m, "sculk_shrieker",    0.403f, 0.933f, 1.000f,  6f, 5, MODE_DOTS);
+        // ⚠️ M8.152: сенсор и шрайкер ТОЖЕ выселены в карту материалов (см. RtMaterialMap).
+        // В ванилле светят 1 и 0 — источниками не являются, но в Ancient City их тысячи, и
+        // по логу они держали слоты буфера на дистанции 5-8 блоков, вытесняя дальние лампы.
+        // ⚠️ M8.150: `sculk` и `sculk_vein` НАМЕРЕННО УБРАНЫ из источников — они переехали в
+        // КАРТУ МАТЕРИАЛОВ (RtMaterialMap.EMISSIVE). Ими покрыт весь Deep Dark: замер дал
+        // 280 711 источников при буфере в 192 слота, из-за чего состав буфера плясал при каждом
+        // шаге камеры — фонари душ гасли, свечи теряли оттенок, по полу ходили мигающие пятна.
+        // В ванилле оба светят НОЛЬ, так что источниками они и не были. Возвращать сюда нельзя.
+        // Катализатор (ванильные 6) и сенсор (1) остаются настоящими лампами — их единицы.
         putEmis(m, "candle",            0.950f, 0.384f, 0.104f,  3f, 0, MODE_FIRE);
 
         // --- ЭМИССИВНЫЕ ДЕКОРАТИВНЫЕ (ванильный свет = 0, светятся сами) ---
@@ -290,9 +301,32 @@ public class RtLights {
     public static void setSectionLights(long key, float[] lights) {
         if (lights == null || lights.length == 0) sectionLights.remove(key);
         else sectionLights.put(key, lights);
+        // Версию щёлкаем ТОЛЬКО если секция попадает в решётку объёма: чанки, догружаемые на краю
+        // прорисовки, на цвет вблизи не влияют, а пересборку запускали (замер: 196 мс каждые 400 мс).
+        if (RtLightVolume.affects(key)) version++;
     }
-    public static void removeSectionLights(long key) { sectionLights.remove(key); }
-    public static void clearSectionLights() { sectionLights.clear(); }
+    public static void removeSectionLights(long key) {
+        sectionLights.remove(key);
+        if (RtLightVolume.affects(key)) version++;
+    }
+
+    // M8.153: СЧЁТЧИК ИЗМЕНЕНИЙ набора источников. Объём цвета (RtLightVolume) запекается заранее,
+    // и без этого счётчика он не узнал бы, что источник сломали или поставили: пересборка шла
+    // только по уходу камеры от центра решётки, поэтому свет разбитого факела продолжал бы
+    // красить округу, пока игрок стоит на месте.
+    private static volatile int version = 0;
+    public static int lightsVersion() { return version; }
+
+    /** M8.153: полный (НЕ капнутый) список источников для запекания объёма цвета.
+     *  Отдаём сырые массивы секций — потребитель сам отберёт нужные по своим границам.
+     *  ⚠️ ПОТОКИ: снимок берётся с РЕНДЕР-потока (оттуда же идёт setSectionLights, так что гонки
+     *  при копировании нет), а читает его потом ФОНОВЫЙ поток запекания. Это безопасно, потому
+     *  что сами массивы секций неизменяемы: setSectionLights всегда кладёт НОВЫЙ массив, а не
+     *  правит существующий. Копируем только ссылки — дёшево даже при тысячах секций. */
+    public static java.util.List<float[]> snapshotSources() {
+        return new java.util.ArrayList<>(sectionLights.values());
+    }
+    public static void clearSectionLights() { sectionLights.clear(); version++; }
 
     // Цвет end_portal из таблицы (для опознания портала среди запечённых источников).
     private static final float EP_R = 0.201f, EP_G = 0.898f, EP_B = 0.659f;
@@ -330,12 +364,30 @@ public class RtLights {
 
     // M8.147 ЦВЕТОВЫЕ ЯКОРЯ — обобщение приёма, которым вытащили портал Энда.
     private static final int   ANCHOR_MAX  = 24;    // слотов под цветовые семейства (из MAX_BLOCKS)
-    private static final float ANCHOR_DIST = 128f;  // дальше якорь бесполезен: шейдер всё равно уводит оттенок в TORCH_COL
+    private static final float ANCHOR_DIST = 80f;   // дальше якорь бесполезен: шейдер уводит оттенок в TORCH_COL
+
+    // M8.148 ОТСЕЧЕНИЕ СЕКЦИЙ ПО ДАЛЬНОСТИ. Замер в Ancient City: 280 711 источников в 4197
+    // секциях, перебор 12.5 МС на потоке рендера (при кадре 16.6 мс!). Причина объёма — скалк:
+    // в ванилле он светит 0, но у нас с floorEmit каждый его блок становится источником, а им
+    // покрыт весь Deep Dark. При этом САМАЯ дальнобойная запись палитры бьёт на 15 блоков —
+    // значит секция, отстоящая дальше, повлиять не может физически. Отсекаем её ЦЕЛИКОМ по
+    // первому же источнику (все прочие лежат в пределах диагонали секции, ~28 блоков), одним
+    // сравнением вместо сотен. Порог с большим запасом: 15 (дальность) + 28 (диагональ) = 43.
+    private static final float SCAN_DIST = 80f;
+    private static int scannedSections = 0;
     private static final Int2IntOpenHashMap anchorSlot = new Int2IntOpenHashMap();
     private static final float[]   anchorDist = new float[ANCHOR_MAX];
     private static final float[][] anchorArr  = new float[ANCHOR_MAX][];
     private static final int[]     anchorOff  = new int[ANCHOR_MAX];
     private static int anchorN = 0;
+
+    /** M8.148: секция целиком вне досягаемости? Судим по ПЕРВОМУ источнику — остальные лежат
+     *  в пределах диагонали секции (~28 блоков), она уже заложена в запас SCAN_DIST. */
+    private static boolean farSection(float[] arr, double cx, double cy, double cz) {
+        if (arr.length < 3) return true;
+        double dx = arr[0] - cx, dy = arr[1] - cy, dz = arr[2] - cz;
+        return dx * dx + dy * dy + dz * dz > (double) SCAN_DIST * SCAN_DIST;
+    }
 
     /** Дёшево: ранжируем ЗАПЕЧЁННЫЕ источники всех секций -> топ-MAX_BLOCKS в blockPx. */
     private static void gatherSectionLights(double cx, double cy, double cz) {
@@ -354,7 +406,10 @@ public class RtLights {
         // (soul_torch/soul_lantern/soul_fire) схлопываются в одно семейство и делят один слот.
         anchorSlot.clear();
         anchorN = 0;
+        scannedSections = 0;
         for (float[] arr : sectionLights.values()) {
+            if (farSection(arr, cx, cy, cz)) continue;    // M8.148: секция вне досягаемости — мимо целиком
+            scannedSections++;
             for (int b = 0; b + 8 <= arr.length; b += 8) {
                 float ax = (float) (arr[b] - cx), ay = (float) (arr[b + 1] - cy), az = (float) (arr[b + 2] - cz);
                 float ad = (float) Math.sqrt(ax * ax + ay * ay + az * az);
@@ -381,6 +436,7 @@ public class RtLights {
         // а на смешивании оттенка сказывается ничтожно (тот же цвет уже представлен соседями).
 
         for (float[] arr : sectionLights.values()) {
+            if (farSection(arr, cx, cy, cz)) continue;    // M8.148: то же отсечение и в ранжире
             for (int b = 0; b + 8 <= arr.length; b += 8) {
                 float dx = (float) (arr[b]     - cx);
                 float dy = (float) (arr[b + 1] - cy);
@@ -394,6 +450,14 @@ public class RtLights {
                 // фонари теряют оттенок на расстоянии»). Теперь 15/7 — ближние всё ещё приоритетнее,
                 // но дальние не вылетают. Полное решение (запечь цвет в вершины) — отдельная веха.
                 float sc = arr[b + 3] / (1.0f + dist * 0.15f);
+                // M8.148 ВТОРОСОРТНЫЕ ИСТОЧНИКИ (идея пользователя). «Точечные» (MODE_DOTS —
+                // скалк, светящийся лишайник, светящиеся лозы) это декоративная подсветка
+                // ПОВЕРХНОСТЕЙ: каждый блок слаб, но ими покрыты целые биомы, и они выдавливают
+                // из буфера настоящие лампы (замер: 280 711 источников, буфер 192/192 забит
+                // скалком, soul-фонарь тонул). Понижаем их вчетверо. Свечение самих точек НЕ
+                // теряем: оценка учитывает близость, поэтому ближний скалк (тот, что видно)
+                // в буфере остаётся, а вытесняется дальний, который и так почти не читается.
+                if (arr[b + 7] == MODE_PHOS) sc *= 0.25f;
 
                 if (n == MAX_BLOCKS) {
                     if (sc <= worstScore) continue;
@@ -440,8 +504,8 @@ public class RtLights {
                     int total = 0;
                     for (float[] a : sectionLights.values()) total += a.length / 8;
                     Initializer.LOGGER.info(
-                            "[RT] lights: {}/{} в буфере, ВСЕГО {} из {} секций, ранжир {} мкс | якоря:{}",
-                            blockN, MAX_BLOCKS, total, sectionLights.size(),
+                            "[RT] lights: {}/{} в буфере, ВСЕГО {} из {} секций (перебрано {}), ранжир {} мкс | якоря:{}",
+                            blockN, MAX_BLOCKS, total, sectionLights.size(), scannedSections,
                             (System.nanoTime() - t0) / 1000, ab);
                 }
             }

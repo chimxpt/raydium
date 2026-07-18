@@ -532,6 +532,7 @@ public class RtWorld {
             w.sections.clear();
             w.pending.clear();
             RtLights.clearSectionLights();   // M8.142: запечённый свет старого мира — тоже сбросить
+            RtLightVolume.reset();           // M8.153: решётка старого мира недействительна
             if (w.entityBlas != null)    { w.deferAS(w.entityBlas);     w.entityBlas = null; }
             // M8.147: BLAS осадков живёт по тем же правилам, что и BLAS сущностей — он лежит
             // в ХВОСТЕ того же буфера вершин, поэтому обязан сбрасываться вместе с ним.
