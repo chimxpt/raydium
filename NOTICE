@@ -1,0 +1,43 @@
+Raydium
+Copyright (C) 2026 chimx
+
+Raydium is a fork of VulkanMod that adds native Vulkan hardware ray tracing
+(ray traced shadows, reflections and colored light) with NVIDIA DLSS Ray
+Reconstruction. Raydium's own source code is licensed under the GNU Lesser
+General Public License version 3.0 (see the LICENSE file) — the same license
+as VulkanMod.
+
+================================================================================
+THIRD-PARTY COMPONENTS AND ATTRIBUTIONS
+================================================================================
+
+1. VulkanMod
+   Copyright (C) xCollateral and the VulkanMod contributors.
+   Licensed under the GNU Lesser General Public License v3.0.
+   https://github.com/xCollateral/VulkanMod
+   Raydium is a derivative work of VulkanMod and remains under LGPL-3.0.
+
+2. NVIDIA DLSS (Deep Learning Super Sampling) — Ray Reconstruction
+   Copyright (C) NVIDIA Corporation. All rights reserved.
+   The NVIDIA DLSS runtime libraries bundled in the "dlss/" directory of the
+   distributed jar (nvngx_dlssd.dll, libnvidia-ngx-dlssd.so) are NOT covered
+   by the LGPL. They are a separate, aggregated component distributed under
+   the NVIDIA RTX SDKs License — see dlss/LICENSE-NVIDIA.txt and dlss/NOTICE.txt.
+   This product uses, but is not endorsed or sponsored by, NVIDIA. "NVIDIA",
+   "DLSS", "RTX" and "GeForce RTX" are trademarks of NVIDIA Corporation.
+
+3. AgX tone mapping matrices
+   Copyright (C) Benjamin Wrensch.
+   Licensed under the MIT License.
+   The AgX display-transform matrices used in Raydium's tone mapper are
+   derived from Benjamin Wrensch's minimal AgX implementation.
+
+4. Moon texture
+   Source: NASA Scientific Visualization Studio (SVS). Public domain.
+   Used for physically-based moon rendering.
+
+================================================================================
+Any file inside the "dlss/" directory of the distributed jar is governed
+solely by the NVIDIA RTX SDKs License, not by the LGPL. All other source code
+in this repository is licensed under LGPL-3.0 unless a file states otherwise.
+================================================================================
