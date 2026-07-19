@@ -6,6 +6,8 @@ import net.minecraft.client.gui.narration.NarratableEntry;
 import net.minecraft.client.gui.narration.NarrationElementOutput;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.util.Mth;
+import net.minecraft.util.Util;
 import net.vulkanmod.config.gui.render.GuiRenderer;
 import net.vulkanmod.config.option.Option;
 import net.vulkanmod.config.option.PerformanceImpact;
@@ -67,13 +69,29 @@ public abstract class OptionWidget<O extends Option<?>> extends VAbstractWidget 
             nameComp = nameComp.copy().withStyle(style -> style.withItalic(true));
         }
 
-        GuiRenderer.drawString(
-                textRenderer,
-                nameComp.getVisualOrderText(),
-                this.x + 8,
-                this.y + (this.height - 8) / 2,
-                color
-        );
+        // M8.156c БЕГУЩАЯ ПОДПИСЬ (просьба пользователя). Длинные названия — «Модель денойзера»,
+        // «Реконструкция лучей» — не влезали между краем строки и элементами управления и молча
+        // налезали на них: прочитать целиком было нельзя. Обрезать многоточием тоже плохо (в
+        // списке из похожих пунктов обрезки совпадают), поэтому подпись ЕЗДИТ туда-обратно.
+        // Ход тот же, что у ванильных виджетов Minecraft: косинус под синусом даёт паузы на
+        // краях и плавный разгон в середине — глаз успевает прочитать, а движение не дёргает.
+        int labelX = this.x + 8;
+        int labelW = this.controlX - labelX - 6;          // до контролов, с зазором
+        int textW  = textRenderer.width(nameComp);
+        int labelY = this.y + (this.height - 8) / 2;
+        if (labelW > 0 && textW > labelW) {
+            double over   = textW - labelW;
+            double period = Math.max(over * 0.5, 3.0);     // длиннее текст — медленнее ход
+            double phase  = (double) Util.getMillis() / 1000.0;
+            double eased  = Math.sin((Math.PI / 2.0) * Math.cos((Math.PI * 2.0) * phase / period)) / 2.0 + 0.5;
+            int off = (int) Mth.lerp(eased, 0.0, over);
+            GuiRenderer.enableScissor(labelX, this.y, labelX + labelW, this.y + this.height);
+            GuiRenderer.drawString(textRenderer, nameComp.getVisualOrderText(),
+                    labelX - off, labelY, color);
+            GuiRenderer.disableScissor();
+        } else {
+            GuiRenderer.drawString(textRenderer, nameComp.getVisualOrderText(), labelX, labelY, color);
+        }
 
 
         this.renderControls(mouseX, mouseY);

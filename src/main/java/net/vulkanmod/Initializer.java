@@ -41,7 +41,15 @@ public class Initializer implements ClientModInitializer {
 		// с некликабельной ручкой RT из этого состояния было бы не выбраться.
 		CONFIG.rtEnabled = CONFIG.shadersEnabled;
 		net.vulkanmod.vulkan.rt.RtScreen.enabled = CONFIG.rtEnabled;
-		net.vulkanmod.vulkan.rt.RtDlss.enabled = CONFIG.dlss;
+		// M8.156 МИГРАЦИЯ: тумблер «DLSS» заменён двумя парами «тумблер + выбор». У кого в конфиге
+		// остался старый флаг выключенным — переносим его, иначе человек молча получил бы DLSS обратно.
+		if (!CONFIG.dlss && CONFIG.rtDenoiserOn && CONFIG.rtUpscalerOn) {
+			CONFIG.rtDenoiserOn = false;
+			CONFIG.rtUpscalerOn = false;
+			CONFIG.dlss = true;                       // флаг отработал, дальше он не значит ничего
+			CONFIG.write();
+		}
+		net.vulkanmod.vulkan.rt.RtDlss.enabled = CONFIG.dlssActive();
 
 		Platform.init();
 

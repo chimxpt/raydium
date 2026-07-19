@@ -73,9 +73,14 @@ public abstract class Options {
                     Component.translatable("vulkanmod.options.graphics.block.raster2").getString(),
                     rasterBlocks[2].options());
         }
+        // M8.156 ПОРЯДОК (просьба пользователя): ЧАНКИ — НАВЕРХ, до наших шейдерных ручек.
+        // Прорисовка и симуляция чанков действуют ВСЕГДА и влияют на кадры сильнее любой нашей
+        // настройки, поэтому искать их под трассировкой противоестественно.
         OptionBlock[] gfxMerged = new OptionBlock[rtBlocks.length + rasterBlocks.length];
-        System.arraycopy(rtBlocks, 0, gfxMerged, 0, rtBlocks.length);
-        System.arraycopy(rasterBlocks, 0, gfxMerged, rtBlocks.length, rasterBlocks.length);
+        int gm = 0;
+        gfxMerged[gm++] = rasterBlocks[0];                       // чанки: прорисовка/симуляция
+        for (OptionBlock rb : rtBlocks) gfxMerged[gm++] = rb;    // наши: шейдеры и трассировка
+        for (int i = 1; i < rasterBlocks.length; i++) gfxMerged[gm++] = rasterBlocks[i];
         page = new OptionPage(
                 Component.translatable("vulkanmod.options.pages.graphics").getString(),
                 gfxMerged
@@ -261,7 +266,7 @@ public abstract class Options {
                 value -> {
                     config.rtEnabled = value;
                     net.vulkanmod.vulkan.rt.RtScreen.enabled = value;
-                    // ⚠️ Включили обратно — секции надо ПЕРЕСТРОИТЬ: пока RT был disabled, мы не
+                    // ⚠️ Включили обратно — секции надо ПЕРЕСТРОИТЬ: пока RT был выключен, мы не
                     // строили для них BLAS, и мир для лучей пуст. Ванильный allChanged() заставляет
                     // игру перезалить чанки, а вместе с ними приедут и наши BLAS.
                     if (value && minecraft.levelRenderer != null) minecraft.levelRenderer.allChanged();
@@ -270,10 +275,50 @@ public abstract class Options {
                 .setTooltip(v -> Component.translatable("vulkanmod.options.rt.enabled.tooltip"))
                 .setImpact(PerformanceImpact.HIGH);
 
-        var dlssOption = new SwitchOption(Component.translatable("vulkanmod.options.rt.dlss"),
-                value -> { config.dlss = value; net.vulkanmod.vulkan.rt.RtDlss.enabled = value; },
-                () -> config.dlss)
-                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.dlss.tooltip"));
+        // M8.156 ДЕНОЙЗЕР И АПСКЕЙЛЕР РАЗДЕЛЕНЫ (просьба пользователя, «как в Cyberpunk»):
+        // у каждого свой тумблер и свой выбор реализации. Это не косметика — работы разные.
+        // DLSS Ray Reconstruction делает обе разом, а FSR 3.1 только увеличивает и шума НЕ
+        // убирает, поэтому держать его в списке денойзеров было бы враньём.
+        // Нереализованные пункты помечены «в работе» и ведут себя как выключенные: человек
+        // видит зерно и понимает, что очистки нет (молча подменять их на DLSS — хуже).
+        Runnable syncDlss = () -> net.vulkanmod.vulkan.rt.RtDlss.enabled = config.dlssActive();
+
+        var upscalerOnOption = new SwitchOption(Component.translatable("vulkanmod.options.rt.upscaler.on"),
+                value -> { config.rtUpscalerOn = value; syncDlss.run(); },
+                () -> config.rtUpscalerOn)
+                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.upscaler.on.tooltip"));
+
+        var upscalerOption = (CyclingOption<Integer>) new CyclingOption<>(
+                Component.translatable("vulkanmod.options.rt.upscaler"),
+                new Integer[]{ Config.UPSCALER_DLSS, Config.UPSCALER_FSR },
+                value -> {
+                    config.rtUpscaler = value;
+                    // Выбор DLSS апскейлером ПРИНУДИТЕЛЬНО ставит его же денойзером: проход один
+                    // и тот же, и отказаться от его чистки нельзя. Ручки денойзера ниже гаснут.
+                    if (value == Config.UPSCALER_DLSS) {
+                        config.rtDenoiserOn = true;
+                        config.rtDenoiser   = Config.DENOISER_DLSS;
+                    }
+                    syncDlss.run();
+                },
+                () -> config.rtUpscaler)
+                .setTranslator(v -> Component.translatable("vulkanmod.options.rt.upscaler." + v))
+                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.upscaler.tooltip"))
+                .setImpact(PerformanceImpact.LOW);
+
+        var denoiserOnOption = new SwitchOption(Component.translatable("vulkanmod.options.rt.denoiser.on"),
+                value -> { config.rtDenoiserOn = value; syncDlss.run(); },
+                () -> config.rtDenoiserOn)
+                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.denoiser.on.tooltip"));
+
+        var denoiserOption = (CyclingOption<Integer>) new CyclingOption<>(
+                Component.translatable("vulkanmod.options.rt.denoiser"),
+                new Integer[]{ Config.DENOISER_DLSS, Config.DENOISER_BUILTIN, Config.DENOISER_FSR_RR },
+                value -> { config.rtDenoiser = value; syncDlss.run(); },
+                () -> config.rtDenoiser)
+                .setTranslator(v -> Component.translatable("vulkanmod.options.rt.denoiser." + v))
+                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.denoiser.tooltip"))
+                .setImpact(PerformanceImpact.LOW);
 
         // РАЗРЕШЕНИЕ ТРАССИРОВКИ. Главный рычаг производительности: пикселей вчетверо меньше — лучей
         // вчетверо меньше. С DLSS кадр восстанавливается до полного, поэтому 50-67% почти незаметны.
@@ -316,16 +361,21 @@ public abstract class Options {
                 .setTooltip(v -> Component.translatable("vulkanmod.options.rt.clouds.tooltip"))
                 .setImpact(PerformanceImpact.MEDIUM);
 
+        var godRaysOption = new SwitchOption(Component.translatable("vulkanmod.options.rt.godrays"),
+                value -> config.rtGodRays = value, () -> config.rtGodRays)
+                .setTooltip(v -> Component.translatable("vulkanmod.options.rt.godrays.tooltip"))
+                .setImpact(PerformanceImpact.HIGH);
+
         var lightsOption = new SwitchOption(Component.translatable("vulkanmod.options.rt.lights"),
                 value -> config.rtColoredLights = value, () -> config.rtColoredLights)
                 .setTooltip(v -> Component.translatable("vulkanmod.options.rt.lights.tooltip"))
                 .setImpact(PerformanceImpact.LOW);
 
         // M8.122: «Шейдеры» — наш пост (AgX + экранные эффекты) поверх ванильного растра при
-        // disabledной трассировке. Иерархия (M8.122c, по слову пользователя): «Шейдеры» доступны
-        // ВСЕГДА, и их disabledие УТАСКИВАЕТ RT за собой (RT без шейдеров не работает) — виджет
+        // выключенной трассировке. Иерархия (M8.122c, по слову пользователя): «Шейдеры» доступны
+        // ВСЕГДА, и их выключение УТАСКИВАЕТ RT за собой (RT без шейдеров не работает) — виджет
         // перещёлкивается честно, он читает getNewValue() при отрисовке. А вот включить RT при
-        // disabledных шейдерах нельзя — ручка заблокирована. Три режима:
+        // выключенных шейдерах нельзя — ручка заблокирована. Три режима:
         // RT ВКЛ -> растр + шейдеры -> чистый растр. Инвариант: RT ВКЛ => шейдеры ВКЛ.
         var shadersOption = new SwitchOption(Component.translatable("vulkanmod.options.shaders.enabled"),
                 value -> config.shadersEnabled = value,
@@ -339,21 +389,40 @@ public abstract class Options {
 
         shadersToggle = shadersOption;   // M8.122e: живой гейт для ванильных ручек «Графики»
 
-        // Трассировка disabledа -> подчинённые ручки гаснут: они бы всё равно ни на что не влияли.
+        // Трассировка выключена -> подчинённые ручки гаснут: они бы всё равно ни на что не влияли.
         Option<?>[] sub = { qualityOption,
-                shadowsOption, ambientOption, reflOption, cloudsOption, lightsOption };
+                shadowsOption, ambientOption, reflOption, cloudsOption, lightsOption, godRaysOption,
+                upscalerOnOption, upscalerOption, denoiserOnOption, denoiserOption };
         for (Option<?> o : sub) o.setActivationFn(() -> rtOption.getNewValue());
         // M8.122e: DLSS — только на железе, где его инициализация не провалилась (старые GPU
-        // без тензорных ядер: тумблер гаснет; RT при disabledном RT и так не пускает).
-        dlssOption.setActivationFn(() -> rtOption.getNewValue()
-                && net.vulkanmod.vulkan.rt.RtDlss.hardwareOk());
+        // без тензорных ядер: тумблер гаснет; RT при выключенном RT и так не пускает).
+        // Выбор реализации и МАСШТАБ гаснут вместе со своим тумблером — ручка, которая ни на что
+        // не влияет, только путает (просьба пользователя: «делай её серой, как переключатель»).
+        upscalerOption.setActivationFn(() -> rtOption.getNewValue() && upscalerOnOption.getNewValue());
+        // Ручки денойзера гаснут, когда апскейлером выбран DLSS: он уже определил и денойзер.
+        denoiserOnOption.setActivationFn(() -> rtOption.getNewValue() && !config.upscalerOwnsDenoiser());
+        denoiserOption.setActivationFn(() -> rtOption.getNewValue()
+                && denoiserOnOption.getNewValue() && !config.upscalerOwnsDenoiser());
+        denoiserOnOption.setOnChange(denoiserOption::updateActiveState);
         // M8.122e: «Разрешение трассировки» имеет смысл ТОЛЬКО с DLSS: без апскейлера кадр
         // растягивался бы простым блитом — мыло. В рантайме без DLSS масштаб принудительно 100%.
-        scaleOption.setActivationFn(() -> rtOption.getNewValue() && dlssOption.getNewValue());
-        dlssOption.setOnChange(scaleOption::updateActiveState);
+        // Масштаб трассировки осмыслен только при живом АПСКЕЙЛЕРЕ: без него кадр растянулся бы
+        // простым блитом (мыло). Поэтому он гаснет вместе с тумблером апскейлера.
+        scaleOption.setActivationFn(() -> rtOption.getNewValue() && upscalerOnOption.getNewValue());
+        upscalerOnOption.setOnChange(() -> {
+            upscalerOption.updateActiveState();
+            scaleOption.updateActiveState();
+            denoiserOnOption.updateActiveState();
+            denoiserOption.updateActiveState();
+        });
+        upscalerOption.setOnChange(() -> {
+            denoiserOnOption.updateActiveState();
+            denoiserOption.updateActiveState();
+        });
         rtOption.setOnChange(() -> {
             for (Option<?> o : sub) o.updateActiveState();
-            dlssOption.updateActiveState();
+            upscalerOnOption.updateActiveState(); upscalerOption.updateActiveState();
+            denoiserOnOption.updateActiveState(); denoiserOption.updateActiveState();
             scaleOption.updateActiveState();
         });
         shadersOption.setOnChange(() -> {
@@ -366,11 +435,13 @@ public abstract class Options {
 
         return new OptionBlock[]{
                 // «Шейдеры» ВЫШЕ трассировки: RT без шейдеров не работает — иерархия сверху вниз.
-                new OptionBlock("", new Option<?>[]{ shadersOption, rtOption, dlssOption, scaleOption, qualityOption }),
+                new OptionBlock("", new Option<?>[]{ shadersOption, rtOption,
+                        upscalerOnOption, upscalerOption, scaleOption,
+                        denoiserOnOption, denoiserOption, qualityOption }),
                 new OptionBlock(Component.translatable("vulkanmod.options.rt.block.light").getString(),
                         new Option<?>[]{ shadowsOption, ambientOption, lightsOption }),
                 new OptionBlock(Component.translatable("vulkanmod.options.rt.block.detail").getString(),
-                        new Option<?>[]{ reflOption, cloudsOption })
+                        new Option<?>[]{ reflOption, cloudsOption, godRaysOption })
         };
     }
 

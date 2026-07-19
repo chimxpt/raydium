@@ -262,7 +262,7 @@ public class RtWorld {
     public void enqueueSection(long key, int wx, int wy, int wz,
                                long bufferId, long byteOffset, int vertexCount, int vertexSize,
                                boolean opaque, boolean water) {
-        // Трассировка disabledа в настройках — не строим BLAS вовсе (это чистая экономия CPU и
+        // Трассировка выключена в настройках — не строим BLAS вовсе (это чистая экономия CPU и
         // видеопамяти). При обратном включении настройка заставляет игру перестроить чанки, и
         // секции приедут сюда заново — см. Options, страница «Трассировка».
         if (!net.vulkanmod.Initializer.CONFIG.rtEnabled) return;

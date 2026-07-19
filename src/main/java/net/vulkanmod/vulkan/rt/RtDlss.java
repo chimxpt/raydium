@@ -106,7 +106,7 @@ public class RtDlss {
                                          int inW, int inH, int outW, int outH, float[] nums, float[] mats);
     private static native void nShutdown();
 
-    /** Распаковать прослойку из jar во временный файл и загрузить. Без неё DLSS просто disabled. */
+    /** Распаковать прослойку из jar во временный файл и загрузить. Без неё DLSS просто выключен. */
     private static synchronized boolean loadLib() {
         if (libTried) return libLoaded;
         libTried = true;
@@ -255,7 +255,7 @@ public class RtDlss {
     public static boolean ready() { return initialized && !failed && feature != 0; }
 
     /** M8.122e: железо/драйвер тянут DLSS (инициализация не провалена). Гейт ТУМБЛЕРА в UI:
-     *  на старых GPU ручка гаснет. Нарочно без enabled — иначе disabledный тумблер сам себя
+     *  на старых GPU ручка гаснет. Нарочно без enabled — иначе выключенный тумблер сам себя
      *  заблокировал бы и обратно не включался. */
     public static boolean hardwareOk() { return !failed; }
 

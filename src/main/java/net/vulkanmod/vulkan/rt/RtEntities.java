@@ -188,7 +188,7 @@ public class RtEntities {
     }
 
     /** Из WorldRenderer.setupRenderer: начался рендер мира. */
-    // M8.123b: НЕТ ТРАССИРОВКИ — НЕТ СБОРА. С disabledным RT потребитель (endFrame из
+    // M8.123b: НЕТ ТРАССИРОВКИ — НЕТ СБОРА. С выключенным RT потребитель (endFrame из
     // recordFrameRebuild) не вызывается, а сборщики продолжали КОПИТЬ каждый кадр: accPtr
     // рос минутами, пока nmemRealloc не вернул NULL (без исключения!), и memCopy в ноль
     // ронял процесс (SIGSEGV в collectParticle, exit 6). Гейт — в точках входа.

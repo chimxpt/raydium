@@ -276,7 +276,7 @@ public class RtLightVolume {
 
     private static int clamp(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
 
-    /** Смена мира / disabledие трассировки. */
+    /** Смена мира / выключение трассировки. */
     public static void reset() {
         originX = Integer.MIN_VALUE;
         bakedVersion = -1;

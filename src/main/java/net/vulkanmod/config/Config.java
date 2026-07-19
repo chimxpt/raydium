@@ -35,14 +35,65 @@ public class Config {
     // ничего не меняет, — обман: пользователь крутит её и верит, что стало быстрее.
     public boolean rtEnabled = true;        // мастер-тумблер: RT-картинка вместо растеризации
     // M8.122: «Шейдеры» — наш пост (AgX + экранные эффекты) поверх ванильного растра, когда RT
-    // disabled. Иерархия: RT ВКЛ подразумевает шейдеры; оба ВЫКЛ = чистый VulkanMod-растр.
+    // выключен. Иерархия: RT ВКЛ подразумевает шейдеры; оба ВЫКЛ = чистый VulkanMod-растр.
     public boolean shadersEnabled = true;
     public boolean rtShadows = true;        // теневой луч к солнцу
     public int rtAmbientRays = 4;           // лучей небесного света на пиксель: 0 (выкл) / 2 / 4
     public boolean rtReflections = true;    // отражения (вода, стекло, металлы)
     public boolean rtClouds = true;         // объёмные облака (марш по лучу — дорого)
+    public boolean rtGodRays = true;        // объёмные лучи солнца (марш с теневым лучом на шаг — дорого)
     public boolean rtColoredLights = true;  // цветной свет от блоков (факелы, лава, фонари)
-    public boolean dlss = true;             // DLSS (апскейл + нейроденойзер Ray Reconstruction)
+    // M8.156 ДЕНОЙЗЕР И АПСКЕЙЛЕР — ДВЕ РАЗНЫЕ РАБОТЫ, поэтому две пары «тумблер + выбор»
+    // (просьба пользователя, «как в Cyberpunk»). Путаница идёт от того, что DLSS Ray
+    // Reconstruction делает обе работы разом: чистит шум И увеличивает. У прочих это разные
+    // инструменты: FSR 3.1 только увеличивает (шума НЕ убирает), наш временной денойзер только
+    // чистит. Поэтому FSR в списке денойзеров стоять не может — выбравший его получил бы гладко
+    // растянутое зерно и решил, что мод сломан.
+    public boolean rtUpscalerOn = true;         // поднимать ли кадр до разрешения экрана
+    public int     rtUpscaler   = UPSCALER_DLSS;
+    public boolean rtDenoiserOn = true;         // убирать ли зерно трассировки
+    public int     rtDenoiser   = DENOISER_DLSS;
+
+    public static final int UPSCALER_DLSS = 0;  // DLSS (внутри Ray Reconstruction)
+    public static final int UPSCALER_FSR  = 1;  // FSR 3.1 — в работе
+
+    public static final int DENOISER_DLSS    = 0;  // DLSS Ray Reconstruction (NVIDIA)
+    public static final int DENOISER_BUILTIN = 1;  // наш временной — в работе (для AMD/Intel)
+    public static final int DENOISER_FSR_RR  = 2;  // FSR Ray Regeneration — в работе (только RDNA 4)
+
+    /** Реализован ли выбор СЕГОДНЯ. Нереализованный ведёт себя как выключенный — честнее, чем
+     *  молча подменять его на DLSS: человек сразу видит зерно и понимает, что очистки нет. */
+    public static boolean denoiserImplemented(int d) { return d == DENOISER_DLSS; }
+    public static boolean upscalerImplemented(int u) { return u == UPSCALER_DLSS; }
+
+    /** Нужен ли живой проход DLSS.
+     *  ⚠️ ТОЛЬКО от ДЕНОЙЗЕРА, и это не упрощение. У нас создаётся фича Ray Reconstruction, а она
+     *  ВСЕГДА чистит — это вся её суть, отключить чистку нельзя. Значит «денойзер ВЫКЛ, апскейлер
+     *  DLSS» запустил бы RR, и он всё равно чистил бы: интерфейс говорил бы одно, а движок делал
+     *  другое. Для чистого апскейла нужна ОТДЕЛЬНАЯ фича DLSS Super Resolution — её мы не создаём.
+     *  Поэтому сегодня апскейл DLSS существует лишь как побочный эффект включённого денойзера. */
+    public boolean dlssActive() {
+        return rtDenoiserOn && rtDenoiser == DENOISER_DLSS;
+    }
+
+    /** M8.156b: АПСКЕЙЛЕР DLSS ПОДЧИНЯЕТ СЕБЕ ДЕНОЙЗЕР — и это асимметрия самого железа, а не
+     *  наша прихоть. Ray Reconstruction слит: выбрав его апскейлером, ты неизбежно получаешь и
+     *  его чистку, отказаться нельзя. Обратное же развязывается свободно: RR умеет работать при
+     *  РАВНЫХ разрешениях («почистить, размер не трогать»), а увеличить потом может кто угодно —
+     *  хоть FSR. Поэтому «денойз DLSS + апскейл FSR» разрешено, а «апскейл DLSS + денойз FSR» нет. */
+    public boolean upscalerOwnsDenoiser() {
+        return rtUpscalerOn && rtUpscaler == UPSCALER_DLSS;
+    }
+
+    /** Реально ли поднимается разрешение. Масштаб < 100% осмыслен, только когда есть чем
+     *  восстанавливать кадр; сегодня это умеет лишь проход DLSS. */
+    public boolean upscalingActive() {
+        return rtUpscalerOn && rtUpscaler == UPSCALER_DLSS && dlssActive();
+    }
+
+    /** ⚠️ УСТАРЕЛО, оставлено ТОЛЬКО для переноса старых конфигов (см. Initializer). Живой
+     *  рубильник тракта — RtDlss.enabled, он выводится из dlssActive(). Новый код это не читает. */
+    public boolean dlss = true;
     public int renderScale = 67;            // РАЗРЕШЕНИЕ ТРАССИРОВКИ, % от экрана (с него DLSS восстанавливает кадр)
     public int rtQuality = 3;               // КАЧЕСТВО: 0 низкое, 1 среднее, 2 высокое, 3 ультра
     // ⚠️ По умолчанию УЛЬТРА — это ровно то, что было зашито в коде до появления настроек.
@@ -87,7 +138,12 @@ public class Config {
 
     private static final Gson GSON = new GsonBuilder()
             .setPrettyPrinting()
-            .excludeFieldsWithModifiers(Modifier.PRIVATE)
+            // ⚠️ STATIC ОБЯЗАТЕЛЕН. excludeFieldsWithModifiers ЗАМЕНЯЕТ список по умолчанию
+            // (там были TRANSIENT и STATIC), а не дополняет его. Без STATIC Gson лезет писать в
+            // ЛЮБОЕ статическое поле класса — и первая же добавленная сюда константа роняет игру
+            // на старте: «Cannot set value of static final field» (M8.156d, краш при загрузке
+            // конфига). Константы в Config класть можно только с этим исключением.
+            .excludeFieldsWithModifiers(Modifier.PRIVATE, Modifier.STATIC)
             .create();
 
     public static Config load(Path path) {
