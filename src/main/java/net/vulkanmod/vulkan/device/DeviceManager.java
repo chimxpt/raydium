@@ -195,6 +195,19 @@ public abstract class DeviceManager {
             // TODO: Disable indirect draw option if unsupported.
             deviceFeatures.features().multiDrawIndirect(device.isDrawIndirectSupported());
 
+            // === RT PATCH (M8.161): РАСШИРЕННЫЕ ФОРМАТЫ STORAGE-ОБРАЗОВ ===
+            // ⚠️ БЕЗ ЭТОГО МОД — НЕЯВНО ТОЛЬКО ДЛЯ NVIDIA. Мы пишем guide-буферы в форматах
+            // R16G16_SFLOAT (векторы движения) и R16_SFLOAT (маска реактивности), а спецификация
+            // Vulkan НЕ относит их к обязательным для storage-образов: они требуют отдельно
+            // включённой возможности shaderStorageImageExtendedFormats. Драйвер NVIDIA работал и
+            // без неё, поэтому дыра не проявлялась — а на Radeon или Arc это законный отказ.
+            // Найдено аудитом перед первым запуском на чужом железе, не по багрепорту.
+            if (device.availableFeatures.features().shaderStorageImageExtendedFormats())
+                deviceFeatures.features().shaderStorageImageExtendedFormats(true);
+            else
+                Initializer.LOGGER.warn("[RT] shaderStorageImageExtendedFormats is unavailable — "
+                        + "16-bit guide buffers may be rejected by the driver");
+
             // Must not set line width to anything other than 1.0 if this is not supported
             if (device.availableFeatures.features().wideLines()) {
                 deviceFeatures.features().wideLines(true);
