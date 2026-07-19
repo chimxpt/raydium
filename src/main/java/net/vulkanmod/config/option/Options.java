@@ -290,7 +290,7 @@ public abstract class Options {
 
         var upscalerOption = (CyclingOption<Integer>) new CyclingOption<>(
                 Component.translatable("vulkanmod.options.rt.upscaler"),
-                new Integer[]{ Config.UPSCALER_DLSS, Config.UPSCALER_FSR },
+                new Integer[]{ Config.UPSCALER_DLSS, Config.UPSCALER_FSR, Config.UPSCALER_BASIC },
                 value -> {
                     config.rtUpscaler = value;
                     // Выбор DLSS апскейлером ПРИНУДИТЕЛЬНО ставит его же денойзером: проход один
@@ -314,7 +314,15 @@ public abstract class Options {
         var denoiserOption = (CyclingOption<Integer>) new CyclingOption<>(
                 Component.translatable("vulkanmod.options.rt.denoiser"),
                 new Integer[]{ Config.DENOISER_DLSS, Config.DENOISER_BUILTIN, Config.DENOISER_FSR_RR },
-                value -> { config.rtDenoiser = value; syncDlss.run(); },
+                value -> {
+                    config.rtDenoiser = value;
+                    // Уходя со DLSS, уводим и апскейлер: DLSS поднимает кадр ТОЛЬКО заодно со своим
+                    // денойзером. Оставь мы его выбранным — масштаб молча вернулся бы к 100%, и
+                    // ползунок разрешения врал бы (ровно это и случилось при первой проверке).
+                    if (value != Config.DENOISER_DLSS && config.rtUpscaler == Config.UPSCALER_DLSS)
+                        config.rtUpscaler = Config.UPSCALER_BASIC;
+                    syncDlss.run();
+                },
                 () -> config.rtDenoiser)
                 .setTranslator(v -> Component.translatable("vulkanmod.options.rt.denoiser." + v))
                 .setTooltip(v -> Component.translatable("vulkanmod.options.rt.denoiser.tooltip"))
@@ -406,9 +414,20 @@ public abstract class Options {
         denoiserOnOption.setOnChange(denoiserOption::updateActiveState);
         // M8.122e: «Разрешение трассировки» имеет смысл ТОЛЬКО с DLSS: без апскейлера кадр
         // растягивался бы простым блитом — мыло. В рантайме без DLSS масштаб принудительно 100%.
-        // Масштаб трассировки осмыслен только при живом АПСКЕЙЛЕРЕ: без него кадр растянулся бы
-        // простым блитом (мыло). Поэтому он гаснет вместе с тумблером апскейлера.
-        scaleOption.setActivationFn(() -> rtOption.getNewValue() && upscalerOnOption.getNewValue());
+        // Масштаб трассировки осмыслен только при РАБОТАЮЩЕЙ модели апскейлера. Мало включить
+        // тумблер: DLSS поднимает кадр лишь заодно со своим денойзером, а FSR ещё не написан.
+        // ⚠️ Раньше ползунок был активен при любой модели, и человек ставил 50%, а движок молча
+        // возвращал 100% — настройка врала. Теперь гаснет ровно тогда, когда не работает.
+        scaleOption.setActivationFn(() -> {
+            if (!rtOption.getNewValue() || !upscalerOnOption.getNewValue()) return false;
+            int u = upscalerOption.getNewValue();
+            if (u == Config.UPSCALER_BASIC) return true;
+            if (u == Config.UPSCALER_DLSS)
+                return denoiserOnOption.getNewValue() && denoiserOption.getNewValue() == Config.DENOISER_DLSS;
+            return false;   // FSR 3.1 — в работе
+        });
+        denoiserOption.setOnChange(scaleOption::updateActiveState);
+        denoiserOnOption.setOnChange(scaleOption::updateActiveState);
         upscalerOnOption.setOnChange(() -> {
             upscalerOption.updateActiveState();
             scaleOption.updateActiveState();
@@ -418,6 +437,7 @@ public abstract class Options {
         upscalerOption.setOnChange(() -> {
             denoiserOnOption.updateActiveState();
             denoiserOption.updateActiveState();
+            scaleOption.updateActiveState();
         });
         rtOption.setOnChange(() -> {
             for (Option<?> o : sub) o.updateActiveState();

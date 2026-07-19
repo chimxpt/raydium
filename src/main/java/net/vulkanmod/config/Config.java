@@ -54,8 +54,13 @@ public class Config {
     public boolean rtDenoiserOn = true;         // убирать ли зерно трассировки
     public int     rtDenoiser   = DENOISER_DLSS;
 
-    public static final int UPSCALER_DLSS = 0;  // DLSS (внутри Ray Reconstruction)
-    public static final int UPSCALER_FSR  = 1;  // FSR 3.1 — в работе
+    public static final int UPSCALER_DLSS  = 0;  // DLSS (внутри Ray Reconstruction), только NVIDIA
+    public static final int UPSCALER_FSR   = 1;  // FSR 3.1 — в работе
+    // ⚠️ БАЗОВЫЙ — НЕ РОВНЯ ОСТАЛЬНЫМ, и это отражено в названии. DLSS и FSR — временные
+    // апскейлеры, восстанавливающие кадр по накопленным субпиксельным сэмплам. Здесь же простое
+    // билинейное увеличение с подчёркиванием контуров (RtPost): работает на любом железе и стоит
+    // копейки, но деталей не добавляет. Его задача — вернуть экономию лучей там, где DLSS нет.
+    public static final int UPSCALER_BASIC = 2;
 
     public static final int DENOISER_DLSS    = 0;  // DLSS Ray Reconstruction (NVIDIA)
     public static final int DENOISER_BUILTIN = 1;  // наш временной — в работе (для AMD/Intel)
@@ -63,7 +68,7 @@ public class Config {
 
     /** Реализован ли выбор СЕГОДНЯ. Нереализованный ведёт себя как выключенный — честнее, чем
      *  молча подменять его на DLSS: человек сразу видит зерно и понимает, что очистки нет. */
-    public static boolean denoiserImplemented(int d) { return d == DENOISER_DLSS; }
+    public static boolean denoiserImplemented(int d) { return d == DENOISER_DLSS || d == DENOISER_BUILTIN; }
     public static boolean upscalerImplemented(int u) { return u == UPSCALER_DLSS; }
 
     /** Нужен ли живой проход DLSS.
@@ -88,7 +93,12 @@ public class Config {
     /** Реально ли поднимается разрешение. Масштаб < 100% осмыслен, только когда есть чем
      *  восстанавливать кадр; сегодня это умеет лишь проход DLSS. */
     public boolean upscalingActive() {
-        return rtUpscalerOn && rtUpscaler == UPSCALER_DLSS && dlssActive();
+        if (!rtUpscalerOn) return false;
+        return switch (rtUpscaler) {
+            case UPSCALER_DLSS  -> dlssActive();   // апскейл живёт внутри прохода Ray Reconstruction
+            case UPSCALER_BASIC -> true;           // билинейка с подчёркиванием в RtPost, работает всегда
+            default -> false;                      // FSR 3.1 — в работе, масштаб держим 100%
+        };
     }
 
     /** ⚠️ УСТАРЕЛО, оставлено ТОЛЬКО для переноса старых конфигов (см. Initializer). Живой

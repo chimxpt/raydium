@@ -4332,6 +4332,17 @@ public class RtSnapshot {
                                            jx * RtDlss.jitterSignX(), jy * RtDlss.jitterSignY(),
                                            !prevValid, camMatrices());
             }
+            // ================== ВСТРОЕННЫЙ ДЕНОЙЗЕР (M8.158) ==================
+            // Наша временная очистка вместо DLSS — то, ради чего мод перестаёт быть «зелёным».
+            // Она НЕ увеличивает кадр, поэтому включается только когда апскейлер выключен и
+            // разрешение трассировки равно экранному (Config.upscalingActive это уже обеспечивает,
+            // а размеры сверяем — на случай кадра, где смена разрешения ещё не доехала).
+            else if (Initializer.CONFIG.rtDenoiserOn
+                    && Initializer.CONFIG.rtDenoiser == net.vulkanmod.config.Config.DENOISER_BUILTIN
+                    && up != null) {
+                // Возвращает false: чистый кадр лежит в hdr (рендерное разрешение), поднимет его пост.
+                dlssDone = RtDenoise.record(frameCmd, stack, hdr, guides, up, W, H, !prevValid);
+            }
 
             // ПОСТ-ПРОХОД: эффекты + AgX + гамма (HDR -> LDR). Барьеры образов ставит он сам.
             // ⚠️ obox посту не нужен — переиспользуем его под служебные поля:

@@ -133,10 +133,16 @@ public class RtDlss {
     /**
      * Расширения VkDevice, которых требует DLSS. Зовётся ДО создания устройства: включить их
      * потом нельзя, а без них NGX не стартует.
+     * ⚠️ СПРАШИВАЕМ ВСЕГДА, а не только при включённом DLSS. Раньше здесь стояла проверка
+     * `enabled`, и если игра стартовала со встроенным денойзером, устройство создавалось без
+     * этих расширений. Переключение на DLSS в настройках после этого молча не работало: NGX
+     * падал с «vkCreateCuModuleNVX ... not available. Request VK_NVX_binary_import extension»,
+     * а игрок видел лишь то, что ничего не изменилось. Неиспользуемое расширение не стоит
+     * ничего, зато переключение работает без перезапуска игры (M8.160).
      */
     public static List<String> requiredDeviceExtensions() {
         List<String> out = new ArrayList<>();
-        if (!enabled || !loadLib()) return out;
+        if (!loadLib()) return out;
         try {
             String s = nRequiredDeviceExtensions();
             if (s != null && !s.isEmpty())

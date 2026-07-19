@@ -23,7 +23,7 @@ public class RtDebugKeyM {
 
     private static final String[] NAMES = {
             "off", "depth", "motion vectors", "normals", "diffuse albedo",
-            "specular albedo (F0)", "roughness"
+            "specular albedo (F0)", "roughness", "denoiser history"
     };
 
     @Inject(method = "keyPress", at = @At("HEAD"))
