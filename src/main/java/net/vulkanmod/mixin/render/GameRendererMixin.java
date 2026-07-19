@@ -32,15 +32,18 @@ public abstract class GameRendererMixin {
     // ⚠️ ТОЛЬКО МИРОВАЯ ПОЗА. Эти же два метода игра зовёт и для РУКИ (renderItemInHand), а рука
     // крутится сильно — замер поймал крен 0.609 там, где у покачивания максимум около 0.05. Значит
     // ловилась поза руки. Окно руки у нас уже размечено (rtHandBegin/rtHandEnd), им и отсекаемся.
+    // M8.157: отдаём КАЖДУЮ позу мира — накапливается результат ВСЕХ шагов покачивания
+    // (bobHurt, bobView и то, что добавляют моды поверх). Раньше побеждала первая, и часть
+    // движения терялась. Позы РУКИ отсекаем её собственным окном, а не порядком вызовов.
     @Inject(method = "bobView", at = @At("RETURN"))
     private void rtBobView(com.mojang.blaze3d.vertex.PoseStack poseStack, float partialTick, CallbackInfo ci) {
-        if (DeviceManager.rayTracingSupported)
+        if (DeviceManager.rayTracingSupported && !rtInHand)
             net.vulkanmod.vulkan.rt.RtSnapshot.setBobPose(poseStack.last().pose());
     }
 
     @Inject(method = "bobHurt", at = @At("RETURN"))
     private void rtBobHurt(com.mojang.blaze3d.vertex.PoseStack poseStack, float partialTick, CallbackInfo ci) {
-        if (DeviceManager.rayTracingSupported)
+        if (DeviceManager.rayTracingSupported && !rtInHand)
             net.vulkanmod.vulkan.rt.RtSnapshot.setBobPose(poseStack.last().pose());
     }
 

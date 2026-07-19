@@ -1,0 +1,69 @@
+name: Announce release on Discord
+
+# GitHub's built-in Discord webhook only sends a one-line "New release published"
+# and drops the release notes entirely. This workflow posts the notes instead, so
+# the announcement actually says what changed.
+#
+# Setup (once):
+#   1. Discord: Server Settings -> Integrations -> Webhooks -> copy the URL
+#      (the PLAIN url this time — do NOT append /github, we send our own payload).
+#   2. GitHub: repo Settings -> Secrets and variables -> Actions -> New secret
+#      named DISCORD_WEBHOOK, paste the URL.
+#   3. Turn the old raw GitHub webhook off, or you will get two messages per release.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  announce:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post release notes to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          TITLE: ${{ github.event.release.name }}
+          TAG: ${{ github.event.release.tag_name }}
+          URL: ${{ github.event.release.html_url }}
+          BODY: ${{ github.event.release.body }}
+          AUTHOR: ${{ github.event.release.author.login }}
+          AVATAR: ${{ github.event.release.author.avatar_url }}
+          PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          set -euo pipefail
+
+          # Discord caps an embed description at 4096 characters. Long release notes
+          # are cut with a pointer to the full text rather than failing the request.
+          DESC="${BODY:-No release notes.}"
+          if [ ${#DESC} -gt 3900 ]; then
+            DESC="${DESC:0:3900}"$'\n\n'"… full notes: $URL"
+          fi
+
+          # Orange for pre-releases, Raydium blue for stable ones.
+          if [ "$PRERELEASE" = "true" ]; then COLOR=15105570; else COLOR=3447003; fi
+
+          # jq builds the JSON so quotes, newlines and markdown in the notes cannot
+          # break the payload — hand-rolled string interpolation would.
+          jq -n \
+            --arg title "${TITLE:-$TAG}" \
+            --arg url "$URL" \
+            --arg desc "$DESC" \
+            --arg tag "$TAG" \
+            --arg author "$AUTHOR" \
+            --arg avatar "$AVATAR" \
+            --argjson color "$COLOR" \
+            '{
+              embeds: [{
+                title: $title,
+                url: $url,
+                description: $desc,
+                color: $color,
+                author: { name: $author, icon_url: $avatar },
+                footer: { text: ("Raydium " + $tag) },
+                timestamp: (now | todate)
+              }]
+            }' > payload.json
+
+          curl -sS -f -X POST -H "Content-Type: application/json" \
+               -d @payload.json "$WEBHOOK"
+          echo "posted: $TAG"

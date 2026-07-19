@@ -3436,17 +3436,21 @@ public class RtSnapshot {
     private static final org.joml.Matrix4f bobPose = new org.joml.Matrix4f();
     private static boolean bobTaken = false;
 
-    /** Из RtWorld.tick (конец кадра): разрешить взять позу в следующем кадре. */
-    public static void resetBobCapture() { bobTaken = false; }
+    /** Из RtWorld.tick (конец кадра): готовим следующий. Позу СБРАСЫВАЕМ В ЕДИНИЧНУЮ — иначе
+     *  кадр, в котором игра покачивание не звала (оно выключено в настройках), унаследовал бы
+     *  чужую позу от предыдущего. */
+    public static void resetBobCapture() { bobTaken = false; bobPose.identity(); }
 
     /**
-     * ⚠️ БЕРЁМ ПЕРВУЮ ПОЗУ КАДРА. Те же методы покачивания игра зовёт и для МИРА, и для РУКИ, причём
-     * для руки — на порядок чаще (замер: 15000 вызовов против 55). Отсекать руку по её окну отрисовки
-     * оказалось ненадёжно: моменты не совпадают. А вот порядок в кадре железный — мир рисуется РАНЬШЕ
-     * руки. Значит первая поза кадра всегда мировая, её и берём, остальные игнорируем.
+     * ⚠️ M8.157: БЕРЁМ ПОСЛЕДНЮЮ ПОЗУ ПЕРЕД РУКОЙ, а не первую в кадре.
+     * Раньше брали первую, и это теряло часть покачивания: игра правит ОДНУ И ТУ ЖЕ позу
+     * несколькими методами по очереди (bobHurt, bobView), а моды вроде Camera Overhaul
+     * добавляют свои преобразования поверх. Первая поза = результат только одного шага, отсюда
+     * репорт «влево-вправо качается, а от шагов нет».
+     * Руку отсекаем НЕ порядком, а её собственным окном отрисовки (rtInHand в миксине): рука
+     * рисуется после мира и крутится куда сильнее (замер: крен 0.609 против ~0.05 у покачивания).
      */
     public static void setBobPose(org.joml.Matrix4fc m) {
-        if (bobTaken) return;
         bobTaken = true;
         bobPose.set(m);
     }
@@ -4375,8 +4379,24 @@ public class RtSnapshot {
         long options = shaderc_compile_options_initialize();
         try {
             shaderc_compile_options_set_target_env(options, shaderc_env_version_vulkan_1_3, VK_API_VERSION_1_3);
-            long res = shaderc_compile_into_spv(compiler, source, shaderc_compute_shader,
-                    "world_snapshot.comp", "main", options);
+            // ⚠️ ИСХОДНИК КЛАДЁМ В КУЧУ, А НЕ В СТЕК. Перегрузка shaderc_compile_into_spv со String
+            // кодирует текст через MemoryStack, а он ФИКСИРОВАННЫЙ (64 КБ у LWJGL по умолчанию).
+            // Наш GLSL этот предел перерос, и сборка пайплайна падала с «OutOfMemoryError: Out of
+            // stack space» — трассировка молча отваливалась в растровый фолбэк (M8.156e). Тот же
+            // порог в 64 КБ мы недавно ловили с другой стороны, на строковой константе class-файла.
+            // memUTF8 берёт память вне стека, поэтому шейдер может расти дальше без сюрпризов.
+            ByteBuffer srcBuf  = MemoryUtil.memUTF8(source, false);   // длину shaderc берёт из буфера
+            ByteBuffer nameBuf = MemoryUtil.memUTF8("world_snapshot.comp");
+            ByteBuffer entryBuf = MemoryUtil.memUTF8("main");
+            long res;
+            try {
+                res = shaderc_compile_into_spv(compiler, srcBuf, shaderc_compute_shader,
+                        nameBuf, entryBuf, options);
+            } finally {
+                MemoryUtil.memFree(srcBuf);
+                MemoryUtil.memFree(nameBuf);
+                MemoryUtil.memFree(entryBuf);
+            }
             try {
                 if (shaderc_result_get_compilation_status(res) != shaderc_compilation_status_success)
                     throw new RuntimeException("shaderc: " + shaderc_result_get_error_message(res));
